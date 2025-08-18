@@ -1,0 +1,32 @@
+@import "@/assets/fonts/pretendard/pretendard.css";
+
+/* 전역 폰트 설정 */
+:root {
+  --app-font: "Pretendard", system-ui;
+}
+
+html, body, #__nuxt {
+  font-family: var(--app-font);
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;   /* Mac/WebKit 보정 */
+  -moz-osx-font-smoothing: grayscale;    /* macOS Firefox 보정 */
+  text-rendering: optimizeLegibility;    /* 커닝/리거쳐 등 */
+}
+
+/* 기본 텍스트 대비/행간 살짝 개선 */
+body {
+  line-height: 1.45;
+  letter-spacing: 0.01em;
+}
+
+/* 제목/버튼 등에 굵기 일관 */
+h1,h2,h3,h4,h5,h6,.panel-title,.btn {
+  font-family: var(--app-font);
+  font-weight: 600;
+}
+
+/* 코드/수치 텍스트용 모노 폰트(원하면 사용) */
+/*
+:root { --mono-font: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Noto Sans Mono", monospace; }
+code, pre, .mono { font-family: var(--mono-font); }
+*/

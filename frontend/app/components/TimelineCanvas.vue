@@ -1,0 +1,685 @@
+<template>
+  <div ref="timelineContainer" class="panel timeline-panel">
+    <div class="panel-title timeline-title">
+      <span>Timeline</span>
+
+      <!-- Joint + RMS controls -->
+      <div class="joint-controls">
+        <label class="lbl">Joint</label>
+        <select v-model.number="project.graphJointIndex" :disabled="isRms"
+          :title="isRms ? 'RMS 모드에서는 개별 조인트 선택이 비활성화됩니다.' : '표시할 조인트를 선택합니다.'">
+          <option v-for="i in 24" :key="i - 1" :value="i - 1">#{{ i - 1 }}</option>
+        </select>
+
+        <label class="lbl">RMS</label>
+        <label class="switch" :title="isRms ? '모든 조인트의 포지션 RMS' : '개별 조인트 값'">
+          <input type="checkbox" :checked="isRms"
+            @change="project.setGraphMode(($event.target as HTMLInputElement).checked ? 'rms' : 'joint')" />
+          <span class="slider"></span>
+        </label>
+      </div>
+    </div>
+
+    <v-stage :config="{ width: Math.max(1, stageWidth), height: totalTimelineHeight }" @wheel="onWheel"
+      @mousedown="onMouseDown" @mousemove="onMouseMove">
+      <v-layer :key="'base-' + sparksVersion">
+        <!-- 배경 -->
+        <v-rect :config="{ x: 0, y: 0, width: stageWidth, height: totalTimelineHeight }" />
+
+        <!-- 세로 그리드 -->
+        <template v-for="t in ticks" :key="'grid-x-' + t.x">
+          <v-line :config="{
+            points: [t.x + timelineOffsetPx, 0, t.x + timelineOffsetPx, totalTimelineHeight],
+            stroke: '#2a3242',
+            strokeWidth: 1
+          }" />
+        </template>
+
+        <!-- 가로 그리드 -->
+        <template v-for="gy in gridRows" :key="'grid-y-' + gy">
+          <v-line :config="{
+            points: [0, gy, stageWidth, gy],
+            stroke: '#253044',
+            strokeWidth: 1
+          }" />
+        </template>
+
+        <!-- 상단 바 -->
+        <v-rect :config="{ x: 0, y: timelineY, width: stageWidth, height: timelineY, fill: '#2b3446' }" />
+
+        <!-- 눈금 + 라벨 -->
+        <template v-for="t in ticks" :key="'tick-' + t.x">
+          <v-line :config="{
+            points: [t.x + timelineOffsetPx, timelineY - 5, t.x + timelineOffsetPx, timelineY + 25],
+            stroke: '#9aa3af',
+            strokeWidth: 1
+          }" />
+          <v-text :config="{
+            x: t.x + timelineOffsetPx + 2,
+            y: timelineY + 28,
+            text: t.label,
+            fontSize: 10,
+            fill: '#c8d0dc'
+          }" />
+        </template>
+
+        <!-- 클립 바 -->
+        <template v-for="clip in viewClips" :key="clip.id">
+          <v-rect :config="{
+            x: clipX(clip) + timelineOffsetPx,
+            y: timelineY + 50 + clip.track * rowH,
+            width: clipW(clip),
+            height: rowH * 0.8,
+            fill:
+              project.selectedClipId === clip.id
+                ? '#7ad1ff'
+                : clip.dragging
+                  ? '#ff9f4f'
+                  : clip.hover
+                    ? '#6fb8ff'
+                    : '#4fa3ff',
+            stroke: project.selectedClipId === clip.id ? '#ffffff' : undefined,
+            strokeWidth: project.selectedClipId === clip.id ? 2 : 0,
+            cornerRadius: 4
+          }" />
+          <v-text :config="{
+            x: clipX(clip) + timelineOffsetPx + 4,
+            y: timelineY + 52 + clip.track * rowH,
+            text: sources[clip.sourceId]?.name || clip.id,
+            fontSize: 12,
+            fill: '#0f1115'
+          }" />
+        </template>
+
+        <!-- 스파클라인 -->
+        <template v-for="clip in viewClips" :key="'spark-'+clip.id+'-'+sparksVersion">
+          <v-line :config="{
+            points: sparkPointsForClip(clip),
+            stroke: 'rgba(255,255,255,.7)',
+            strokeWidth: 1,
+            lineCap: 'round',
+            lineJoin: 'round',
+            listening: false
+          }" />
+        </template>
+
+        <!-- 스냅 가이드 -->
+        <v-line v-if="snapGuideXPx !== null" :config="{
+          points: [snapGuideXPx, 0, snapGuideXPx, totalTimelineHeight],
+          stroke: '#ffd166',
+          strokeWidth: 1,
+          dash: [4, 4]
+        }" />
+
+        <!-- 마커 -->
+        <v-line :config="{
+          points: [markerXPx + timelineOffsetPx, 0, markerXPx + timelineOffsetPx, totalTimelineHeight],
+          stroke: '#ff4040',
+          strokeWidth: 2
+        }" />
+        <v-text :config="{
+          x: markerXPx + timelineOffsetPx + 6,
+          y: 6,
+          text: markerLabel,
+          fontSize: 12,
+          fill: '#ff8888'
+        }" />
+      </v-layer>
+    </v-stage>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, onMounted, onBeforeUnmount, reactive, watch, nextTick } from 'vue'
+import { useProjectStore, type Source } from '@/stores/project'
+import { storeToRefs } from 'pinia'
+import { MotionClient, throttle } from '@/lib/motionClient'
+
+/* ---------- 레이아웃/상수 ---------- */
+const DOF = 24
+const timelineY = 20
+const rowH = 35
+const rowHeight = 40
+
+/* ---------- 컨테이너 & 실제 폭 측정 ---------- */
+const timelineContainer = ref<HTMLElement | null>(null)
+const stageWidth = ref(1)               // v-stage에 전달하는 실제 content-box width
+let contRO: ResizeObserver | null = null
+
+function measureStageWidth() {
+  const el = timelineContainer.value
+  if (!el) return
+  const w = el.clientWidth          // content-box width
+  if (w > 0 && w !== stageWidth.value) {
+    stageWidth.value = w
+    clampOffset()
+    genTicks()
+    requestSparksRedraw()
+  }
+}
+
+/* ---------- 스토어 ---------- */
+const project = useProjectStore()
+const { clips, sources, lengthMs } = storeToRefs(project)
+const isRms = computed(() => project.graphJointMode === 'rms')
+
+/* ---------- Motion WS ---------- */
+const motion = new MotionClient(project.backendUrl + '/ws/motion')
+motion.connect()
+
+/* ---------- 스케일/오프셋 ---------- */
+const zoom = ref(0.1)               // px per ms
+const timelineOffsetPx = ref(0)
+
+const contentMs = computed(() => {
+  if (lengthMs.value > 0) return lengthMs.value
+  let maxEnd = 0
+  for (const c of clips.value) {
+    const s = sources.value[c.sourceId]
+    if (!s) continue
+    const dur = Math.round((c.outFrame - c.inFrame) * s.dt * 1000 + c.t0)
+    maxEnd = Math.max(maxEnd, c.t0 + dur)
+  }
+  return maxEnd
+})
+const contentWidthPx = computed(() => contentMs.value * zoom.value)
+
+/* ---------- 마커 ---------- */
+const markerXPx = ref(100)
+const markerMs = computed(() => Math.max(0, markerXPx.value / zoom.value))
+const markerLabel = computed(() =>
+  markerMs.value >= 1000 ? `${(markerMs.value / 1000).toFixed(2)} s` : `${Math.round(markerMs.value)} ms`
+)
+
+/* ---------- 마우스 상태 ---------- */
+const isMarkerDragging = ref(false)
+const isTimelineDragging = ref(false)
+let lastPointerX = 0
+
+/* ---------- 클립 드래그/리사이즈 상태 ---------- */
+const activeClipId = ref<string | null>(null)
+const clipDragMode = ref<'none' | 'move' | 'resize-left' | 'resize-right'>('none')
+let clipDragStartX = 0
+let clipOriginalT0 = 0
+let clipOriginalInFrame = 0
+let clipOriginalOutFrame = 0
+
+/* ---------- 좌표 변환 ---------- */
+const pxPerMs = computed(() => zoom.value)
+const msToPx = (ms: number) => ms * pxPerMs.value
+const pxToMs = (px: number) => px / pxPerMs.value
+
+/* ---------- 틱(눈금) ---------- */
+type Tick = { x: number; label: string }
+const ticks = ref<Tick[]>([])
+function niceStep(msPerPx: number) {
+  const targetPx = 80
+  const wantMs = targetPx / msPerPx
+  const base = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000]
+  for (const s of base) if (s >= wantMs) return s
+  return 20000
+}
+function formatMs(ms: number) {
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`
+}
+function genTicks() {
+  const stepMs = niceStep(pxPerMs.value)
+  const startVisibleMs = Math.max(0, -timelineOffsetPx.value / pxPerMs.value)
+  const endVisibleMs = startVisibleMs + stageWidth.value / pxPerMs.value
+  const startMs = Math.floor(startVisibleMs / stepMs) * stepMs
+  const list: Tick[] = []
+  for (let t = startMs; t <= endVisibleMs + stepMs; t += stepMs) {
+    list.push({ x: msToPx(t), label: formatMs(t) })
+  }
+  ticks.value = list
+}
+
+/* ---------- Motion push ---------- */
+const pushProject = throttle(() => motion.setProject(project.toSnapshot()), 80)
+const pushSeek = throttle((ms: number) => motion.seek(Math.round(ms)), 33) // ~30Hz
+
+watch([clips, sources, () => project.lengthMs], pushProject, { deep: true })
+watch(markerMs, (ms) => pushSeek(ms))
+
+/* ---------- 스냅 ---------- */
+const snapGuideXPx = ref<number | null>(null)
+const snap = reactive({ enabled: true, to: 'both' as 'grid' | 'clips' | 'both', thresholdPx: 8 })
+function currentGridStepMs() { return niceStep(pxPerMs.value) }
+function applySnapMs(candidateMs: number, excludeClipId?: string) {
+  if (!snap.enabled) return { ms: candidateMs, guidePx: null }
+  const step = currentGridStepMs()
+  const gridTarget = Math.round(candidateMs / step) * step
+  const clipTargets: number[] = []
+  if (snap.to === 'clips' || snap.to === 'both') {
+    for (const vc of viewClips.value) {
+      if (vc.id === excludeClipId) continue
+      clipTargets.push(vc.t0, vc.t0 + vc.durationMs)
+    }
+  }
+  const candidates = [gridTarget, ...clipTargets]
+  const thMs = pxToMs(snap.thresholdPx)
+  let best = candidateMs, bestDist = Number.POSITIVE_INFINITY
+  for (const t of candidates) {
+    const d = Math.abs(t - candidateMs)
+    if (d < bestDist) { bestDist = d; best = t }
+  }
+  if (bestDist <= thMs) {
+    const guidePx = msToPx(best) + timelineOffsetPx.value
+    return { ms: best, guidePx }
+  }
+  return { ms: candidateMs, guidePx: null }
+}
+
+/* ---------- 클립 뷰 모델 ---------- */
+type ViewClip = ReturnType<typeof buildViewClips>[number]
+const buildViewClips = () => {
+  return clips.value.map((c, i) => {
+    const s = sources.value[c.sourceId]
+    const durationMs = s ? Math.round((c.outFrame - c.inFrame) * s.dt * 1000) : 0
+    return { ...c, track: i, durationMs, hover: false, dragging: false }
+  })
+}
+const viewClips = ref<ViewClip[]>([])
+function refreshViewClips() {
+  const prev = new Map(viewClips.value.map(vc => [vc.id, { hover: vc.hover, dragging: vc.dragging }]))
+  viewClips.value = buildViewClips().map(vc => {
+    const old = prev.get(vc.id)
+    return { ...vc, hover: old?.hover ?? false, dragging: old?.dragging ?? false }
+  })
+}
+const clipX = (clip: ViewClip) => msToPx(clip.t0)
+const clipW = (clip: ViewClip) => msToPx(clip.durationMs)
+
+/* ---------- 그리드 Y들 ---------- */
+const gridRows = computed(() => {
+  const ys: number[] = []
+  const startY = timelineY + 50
+  const rows = Math.max(1, Math.ceil(totalTimelineHeight.value / rowH))
+  for (let i = 0; i <= rows; i++) ys.push(startY + i * rowH)
+  ys.unshift(timelineY)
+  return ys
+})
+
+/* ---------- 오프셋 클램프 ---------- */
+function clampOffset() {
+  const min = Math.min(0, stageWidth.value - contentWidthPx.value)
+  if (timelineOffsetPx.value > 0) timelineOffsetPx.value = 0
+  if (timelineOffsetPx.value < min) timelineOffsetPx.value = min
+}
+
+/* ---------- 이벤트 ---------- */
+function onWheel(e: any) {
+  // if (e.evt.shiftKey) {
+  //   e.evt.preventDefault()
+  //   const delta = e.evt.deltaX || 0
+  //   timelineContainer.value?.scrollBy({ top: delta, behavior: 'auto' })
+  //   return
+  // }
+
+  if (e.evt.shiftKey) {
+    e.evt.preventDefault()
+    const scaleBy = 1.1
+    const oldZoom = zoom.value
+    const stage = e.target.getStage()
+    const pos = stage?.getPointerPosition()
+    const mouseX = pos?.x ?? stageWidth.value / 2
+    const worldXBefore = (mouseX - timelineOffsetPx.value) / oldZoom
+
+    if (e.evt.deltaY < 0) zoom.value *= scaleBy
+    else zoom.value /= scaleBy
+    zoom.value = Math.min(2.0, Math.max(0.02, zoom.value))
+
+    timelineOffsetPx.value = mouseX - worldXBefore * zoom.value
+    clampOffset()
+    genTicks()
+    requestSparksRedraw()
+  }
+}
+
+function onMouseDown(e: any) {
+  const pos = e.target.getStage().getPointerPosition()
+  if (!pos) return
+  lastPointerX = pos.x
+
+  const hit = viewClips.value.find((vc) => {
+    const x = clipX(vc) + timelineOffsetPx.value
+    const y = timelineY + 50 + vc.track * rowH
+    return (pos.x >= x && pos.x <= x + clipW(vc) && pos.y >= y && pos.y <= y + rowH * 0.8)
+  })
+
+  if (hit) {
+    project.setSelectedClip?.(hit.id)
+    activeClipId.value = hit.id
+    hit.dragging = true
+    clipDragStartX = pos.x
+    clipOriginalT0 = hit.t0
+    clipOriginalInFrame = hit.inFrame
+    clipOriginalOutFrame = hit.outFrame
+    clipDragMode.value = 'move'
+    return
+  }
+
+  project.setSelectedClip?.(null)
+
+  if (e.evt.button === 1) {
+    isTimelineDragging.value = true
+    return
+  }
+
+  if (e.evt.button === 0) {
+    isMarkerDragging.value = true
+    const rawMs = pxToMs(Math.max(0, pos.x - timelineOffsetPx.value))
+    const { ms, guidePx } = applySnapMs(rawMs)
+    markerXPx.value = msToPx(ms)
+    snapGuideXPx.value = guidePx
+    genTicks()
+  }
+}
+
+function onMouseMove(e: any) {
+  const stage = e.target.getStage()
+  const container = stage.container()
+  const pos = stage.getPointerPosition()
+  if (!pos) return
+
+  if (activeClipId.value) {
+    const vc = viewClips.value.find(v => v.id === activeClipId.value)
+    if (!vc) return
+    const src = sources.value[vc.sourceId]
+    if (!src) return
+
+    const dxPx = pos.x - clipDragStartX
+    const dxMs = Math.round(pxToMs(dxPx))
+
+    if (clipDragMode.value === 'move') {
+      const candidate = Math.max(0, clipOriginalT0 + dxMs)
+      const { ms: snapped, guidePx } = applySnapMs(candidate, vc.id)
+      const c = clips.value.find(c => c.id === vc.id)
+      if (c) c.t0 = snapped
+      snapGuideXPx.value = guidePx
+      setCursor(container, 'grabbing')
+      refreshViewClips()
+      requestSparksRedraw()
+    }
+    return
+  }
+
+  // hover 표시
+  let hovering = false
+  viewClips.value.forEach(vc => {
+    const x = clipX(vc) + timelineOffsetPx.value
+    const y = timelineY + 50 + vc.track * rowH
+    vc.hover = pos.x >= x && pos.x <= x + clipW(vc) && pos.y >= y && pos.y <= y + rowH * 0.8
+    if (vc.hover) hovering = true
+  })
+  setCursor(container, hovering ? 'grab' : 'default')
+
+  if (isMarkerDragging.value) {
+    const rawMs = pxToMs(Math.max(0, pos.x - timelineOffsetPx.value))
+    const { ms, guidePx } = applySnapMs(rawMs)
+    markerXPx.value = msToPx(ms)
+    snapGuideXPx.value = guidePx
+    return
+  }
+  if (isTimelineDragging.value) {
+    const dx = pos.x - lastPointerX
+    timelineOffsetPx.value += dx
+    lastPointerX = pos.x
+    clampOffset()
+    genTicks()
+    requestSparksRedraw()
+    return
+  }
+}
+
+function onMouseUp() {
+  isMarkerDragging.value = false
+  isTimelineDragging.value = false
+  activeClipId.value = null
+  clipDragMode.value = 'none'
+  viewClips.value.forEach(v => (v.dragging = false))
+  snapGuideXPx.value = null
+}
+
+let lastCursor = ''
+function setCursor(container: HTMLElement, v: string) {
+  if (lastCursor !== v) { container.style.cursor = v; lastCursor = v }
+}
+
+/* ---------- 초기화 & 예시 ---------- */
+onMounted(async () => {
+  await nextTick()
+
+  // 초기 폭 측정: 레이아웃 안정화 프레임까지 재시도
+  const tryMeasure = () => {
+    measureStageWidth()
+    if (stageWidth.value <= 1) requestAnimationFrame(tryMeasure)
+  }
+  tryMeasure()
+
+  // 컨테이너 ResizeObserver
+  contRO = new ResizeObserver(() => measureStageWidth())
+  if (timelineContainer.value) contRO.observe(timelineContainer.value)
+
+  window.addEventListener('keydown', (e) => { if (e.altKey) snap.enabled = false })
+  window.addEventListener('keyup', (e) => { if (!e.altKey) snap.enabled = true })
+  window.addEventListener('mouseup', onMouseUp)
+
+  // 예시 소스
+  function makeRandomFrames(n: number, dof: number) {
+    return Array.from({ length: n }, (_, i) =>
+      Array.from({ length: dof }, (_, j) =>
+        Math.sin(i / 10 + j * 0.17) * 0.5 + Math.cos(i / 18 + j * 0.11) * 0.3
+      )
+    )
+  }
+  if (Object.keys(project.sources).length === 0) {
+    const src1: Omit<Source, 'id'> = { name: 'Motion A', dt: 0.033, frames: makeRandomFrames(90, DOF) }
+    const src2: Omit<Source, 'id'> = { name: 'Motion B', dt: 0.033, frames: makeRandomFrames(60, DOF) }
+    const src3: Omit<Source, 'id'> = { name: 'Motion C', dt: 0.033, frames: makeRandomFrames(500, DOF) }
+    project.addSource(src1); project.addSource(src2); project.addSource(src3)
+  }
+
+  refreshViewClips()
+  clampOffset()
+  genTicks()
+  requestSparksRedraw()
+
+  motion.onOpen(() => {
+    motion.setProject(project.toSnapshot())
+    motion.seek(Math.round(markerMs.value))
+  })
+})
+
+onBeforeUnmount(() => {
+  try { contRO?.disconnect() } catch { }
+  window.removeEventListener('mouseup', onMouseUp)
+})
+
+watch(clips, refreshViewClips, { deep: true })
+watch(sources, () => { refreshViewClips(); sparkCache.clear(); requestSparksRedraw() }, { deep: true })
+watch([() => project.graphJointMode, () => project.graphJointIndex], () => {
+  sparkCache.clear()
+  requestSparksRedraw()
+})
+
+/* ---------- 스파클라인 ---------- */
+const SPARK_SAMPLES = 120
+type SparkCacheKey = string // `${sourceId}:${mode}:${jointIndex}`
+const sparkCache = new Map<SparkCacheKey, Float32Array>()
+const sparksVersion = ref(0)
+let sparkRaf: number | undefined
+function requestSparksRedraw() {
+  if (sparkRaf) cancelAnimationFrame(sparkRaf)
+  sparkRaf = requestAnimationFrame(() => { sparksVersion.value++ })
+}
+
+function computeSignal(frames: number[][], mode: 'joint' | 'rms', jointIndex: number): Float32Array {
+  const N = frames.length
+  const out = new Float32Array(SPARK_SAMPLES)
+  if (!N) return out
+  for (let i = 0; i < SPARK_SAMPLES; i++) {
+    const a = Math.floor(i * N / SPARK_SAMPLES)
+    const b = Math.floor((i + 1) * N / SPARK_SAMPLES)
+    let acc = 0, cnt = 0
+    for (let k = a; k < Math.max(a + 1, b); k++) {
+      const q = frames[k]
+      let v = 0
+      if (mode === 'joint') {
+        v = q?.[jointIndex] ?? 0
+      } else {
+        let s = 0, cntd = 0
+        if (q) {
+          for (let d = 0; d < q.length; d++) {
+            const val = q[d]
+            if (val !== undefined && val !== null) { s += val * val; cntd++ }
+          }
+        }
+        v = cntd ? Math.sqrt(s / cntd) : 0
+      }
+      acc += v; cnt++
+    }
+    out[i] = cnt ? acc / cnt : 0
+  }
+  // 정규화 0..1
+  let mn = Infinity, mx = -Infinity
+  for (let i = 0; i < out.length; i++) { const v = out[i] ?? 0; if (v < mn) mn = v; if (v > mx) mx = v }
+  const span = Math.max(1e-6, mx - mn)
+  for (let i = 0; i < out.length; i++) out[i] = ((out[i] ?? 0) - mn) / span
+  return out
+}
+
+function getSpark(sourceId: string): Float32Array {
+  const s = sources.value[sourceId]; if (!s) return new Float32Array(SPARK_SAMPLES)
+  const key: SparkCacheKey = `${sourceId}:${project.graphJointMode}:${project.graphJointIndex}`
+  const hit = sparkCache.get(key)
+  if (hit) return hit
+  const sig = computeSignal(s.frames, project.graphJointMode, project.graphJointIndex)
+  sparkCache.set(key, sig)
+  return sig
+}
+
+function sparkPointsForClip(clip: ViewClip): number[] {
+  const s = sources.value[clip.sourceId]; if (!s) return []
+  const sig = getSpark(clip.sourceId)  // [SPARK_SAMPLES]
+  const framesTotal = s.frames.length
+  const a = clip.inFrame / framesTotal
+  const b = clip.outFrame / framesTotal
+  const ia = Math.floor(a * SPARK_SAMPLES)
+  const ib = Math.max(ia + 2, Math.floor(b * SPARK_SAMPLES))
+
+  const w = clipW(clip)
+  const h = rowH * 0.8
+  const x0 = clipX(clip) + timelineOffsetPx.value
+  const y0 = timelineY + 50 + clip.track * rowH
+
+  const pts: number[] = []
+  const span = Math.max(1, ib - ia - 1)
+  for (let i = 0; i <= span; i++) {
+    const t = i / span
+    const idx = Math.min(SPARK_SAMPLES - 1, ia + Math.round(t * (ib - ia)))
+    const v = sig[idx] ?? 0 // 0..1
+    const x = x0 + t * w
+    const y = y0 + (1 - v) * (h - 6) + 3
+    pts.push(x, y)
+  }
+  return pts
+}
+
+/* ---------- 총 높이 ---------- */
+const totalTimelineHeight = computed(() => project.clips.length * rowHeight + 60)
+</script>
+
+<style scoped>
+.timeline-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  /* ✅ 자식이 줄어들 수 있도록 */
+  min-height: 0;
+  overflow-y: auto;
+  /* ✅ 세로 스크롤 */
+  overflow-x: hidden;
+  /* ✅ 가로 스크롤 제거 */
+  background: var(--bg-2);
+  padding: 12px;
+  border: 1px solid var(--line-1);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+
+.timeline-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.joint-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.lbl {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.joint-controls select {
+  background: var(--bg-3);
+  color: var(--text-0);
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  padding: 4px 8px;
+  min-width: 72px;
+}
+
+.joint-controls select:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+
+/* 작은 토글 스위치 */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 20px;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background: var(--line-2);
+  border-radius: 999px;
+  transition: .15s;
+}
+
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 14px;
+  width: 14px;
+  left: 3px;
+  top: 3px;
+  background: white;
+  border-radius: 50%;
+  transition: .15s;
+}
+
+.switch input:checked+.slider {
+  background: var(--accent);
+}
+
+.switch input:checked+.slider:before {
+  transform: translateX(16px);
+}
+</style>

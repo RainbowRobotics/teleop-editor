@@ -1,0 +1,193 @@
+:root {
+  --bg-0: #0f1115;
+  --bg-1: #11141a;
+  --bg-2: #161a22;
+  --bg-3: #1d2430;
+  --line-1: #222938;
+  --line-2: #2b3446;
+  --text-0: #e8ecf1;
+  --text-1: #c8d0dc;
+  --text-dim: #9aa3af;
+  --accent: #4fa3ff;
+  --ok: #48d597;
+  --warn: #ffb13b;
+  --bad: #ff5b6e;
+  --shadow: 0 10px 30px rgba(0, 0, 0, .35);
+}
+
+html, body, #__nuxt {
+  height: 100%;
+  background: var(--bg-0);
+  color: var(--text-0);
+  margin: 0;
+}
+
+body { overflow: hidden; }
+
+.app-shell {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: hidden;
+}
+
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--line-1);
+  box-shadow: var(--shadow);
+}
+
+/* 패널 */
+.panel {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;  
+  padding: 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-1);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;            /* ✅ flex 컨테이너에서 줄어들 수 있게 */
+}
+
+.panel-title {
+  font-weight: 600;
+  letter-spacing: .2px;
+  color: var(--text-1);
+  margin-bottom: 10px;
+}
+
+/* 버튼 행 */
+.btn-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* 상태칩 */
+.status-chip {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line-2);
+  color: var(--text-1);
+}
+.status-chip.ok {
+  background: rgba(72, 213, 151, .1);
+  border-color: rgba(72, 213, 151, .35);
+}
+.status-chip.warn {
+  background: rgba(255, 177, 59, .08);
+  border-color: rgba(255, 177, 59, .35);
+}
+.status-chip.bad {
+  background: rgba(255, 91, 110, .1);
+  border-color: rgba(255, 91, 110, .35);
+}
+
+/* Splitpanes */
+.splitpanes {
+  box-sizing: border-box;
+  gap: 8px;
+  padding: 8px;
+}
+
+/* splitpanes 내부 Pane이 flex 컨텍스트에서 자식이 줄어들 수 있도록 */
+.splitpanes__pane {
+  min-height: 0;    /* ✅ 중요 */
+  min-width: 0;     /* 가로도 필요하면 */
+  display: flex;    /* Pane 전체를 flex로 */
+  flex-direction: column;
+}
+
+/* Panel 안쪽에서 실제 스크롤할 영역 */
+.fill {
+  flex: 1 1 auto;
+  min-height: 0;    /* ✅ 이거 없으면 자식이 넘칩니다 */
+}
+.splitpanes__splitter {
+  background: var(--line-1);
+}
+.splitpanes__splitter:hover {
+  background: var(--accent);
+}
+
+/* Vuetify / 패널 통일 */
+.v-card,
+.v-card__text,
+.v-sheet,
+.splitpanes__pane,
+.panel-container {
+  background-color: var(--bg-1) !important;
+  color: var(--text-1) !important;
+  border-radius: 8px !important;
+  border: none !important;
+  overflow: hidden !important;
+}
+
+.panel-inner {
+  background-color: var(--bg-2) !important;
+}
+
+.v-card-title,
+.panel-header {
+  background-color: var(--bg-2) !important;
+  color: var(--text-0) !important;
+}
+
+.v-divider,
+.splitpanes__split {
+  background-color: var(--line-1) !important;
+}
+
+.timeline {
+  background-color: var(--bg-3) !important;
+  color: var(--text-1) !important;
+}
+
+.v-btn {
+  color: var(--text-0) !important;
+}
+
+.status-ok { color: var(--ok) !important; }
+.status-warn { color: var(--warn) !important; }
+.status-bad { color: var(--bad) !important; }
+
+
+/* Splitpanes 자체가 남은 공간을 먹게 */
+.app-shell > .splitpanes {
+  flex: 1 1 auto;
+  min-height: 0;     /* 자식이 넘치지 않게—매우 중요 */
+  padding: 8px;
+  gap: 8px;
+  overflow: hidden;  /* 불필요한 바깥 스크롤 방지 */
+}
+
+/* Pane들이 내부에서만 스크롤되도록 */
+.splitpanes__pane {
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 실제 스크롤 영역을 명시적으로 지정 (필요한 곳만) */
+.panel { 
+  /* 외곽 컨테이너는 넘치지 않게만 */
+  overflow: hidden;
+}
+.fill {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;   /* <- 여기에서만 스크롤 나게 */
+}
