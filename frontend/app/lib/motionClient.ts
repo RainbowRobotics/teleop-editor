@@ -26,7 +26,6 @@ export class MotionClient {
     connect() {
         if (this.ws) try { this.ws.close() } catch { }
         this.ws = new WebSocket(this.url)
-        console.log(this.ws)
 
         this.ws.onopen = () => {
             this._connected = true

@@ -12,5 +12,5 @@ dependencies = [
     "python-multipart>=0.0.20",
     "rby1-sdk>=0.8.1",
     "ruckig>=0.15.3",
-    "uvicorn>=0.35.0",
+    "uvicorn[standard]>=0.35.0",
 ]

@@ -354,7 +354,7 @@ onMounted(async () => {
     motion.seek(0)
   })
   motion.onPose((_t, q) => {
-    console.log('Received:', q)
+    // console.log('Received:', q)
     lastPose.value = q
     // 즉시 1회 반영해도 좋음
     updateUrdfJoints()

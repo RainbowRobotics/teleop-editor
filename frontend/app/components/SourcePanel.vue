@@ -8,12 +8,12 @@
       </div>
       <div class="actions">
         <button class="btn ghost" @click="onClickImport">
-          <svg viewBox="0 0 24 24" class="ico"><path d="M5 20h14a1 1 0 0 0 1-1v-6h-2v5H6v-5H4v6a1 1 0 0 0 1 1Zm7-15.586 3.293 3.293 1.414-1.414L12 1.586 7.293 6.293l1.414 1.414L11 4.414V16h2V4.414Z"/></svg>
+          <!-- <svg viewBox="0 0 24 24" class="ico"><path d="M5 20h14a1 1 0 0 0 1-1v-6h-2v5H6v-5H4v6a1 1 0 0 0 1 1Zm7-15.586 3.293 3.293 1.414-1.414L12 1.586 7.293 6.293l1.414 1.414L11 4.414V16h2V4.414Z"/></svg> -->
           파일 가져오기
         </button>
         <button class="btn primary" :class="{ danger: isRecording }" @click="toggleRecording">
-          <svg v-if="!isRecording" viewBox="0 0 24 24" class="ico"><path d="M12 6a4 4 0 0 0-4 4v2H6a2 2 0 0 0-2 2v3h2v-3h2v3h8v-3h2v3h2v-3a2 2 0 0 0-2-2h-2v-2a4 4 0 0 0-4-4Zm0 2a2 2 0 0 1 2 2v2h-4v-2a2 2 0 0 1 2-2Z"/></svg>
-          <svg v-else viewBox="0 0 24 24" class="ico"><path d="M8 6h3v12H8zM13 6h3v12h-3z"/></svg>
+          <!-- <svg v-if="!isRecording" viewBox="0 0 24 24" class="ico"><path d="M12 6a4 4 0 0 0-4 4v2H6a2 2 0 0 0-2 2v3h2v-3h2v3h8v-3h2v3h2v-3a2 2 0 0 0-2-2h-2v-2a4 4 0 0 0-4-4Zm0 2a2 2 0 0 1 2 2v2h-4v-2a2 2 0 0 1 2-2Z"/></svg> -->
+          <!-- <svg v-else viewBox="0 0 24 24" class="ico"><path d="M8 6h3v12H8zM13 6h3v12h-3z"/></svg> -->
           {{ isRecording ? '녹화 중지' : '녹화하기' }}
         </button>
       </div>

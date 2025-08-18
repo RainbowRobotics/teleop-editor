@@ -2,7 +2,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import quest, robot, ws, motion as motion_ws
+from app.routers import quest, robot, master, teleop, ws, gripper, motion as motion_ws
 from app.routers import project as project_router
 from app.services.quest_service import quest_service
 
@@ -30,6 +30,9 @@ def create_app() -> FastAPI:
     app.include_router(ws.router)
     app.include_router(quest.router)
     app.include_router(robot.router)
+    app.include_router(master.router)
+    app.include_router(teleop.router)
+    app.include_router(gripper.router)
     app.include_router(motion_ws.router)
     app.include_router(project_router.router)
 

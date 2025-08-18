@@ -12,7 +12,6 @@
         <div>Duration: {{ (totalMs / 1000).toFixed(2) }} s</div>
       </div>
 
-      <!-- ✅ mini-bar: width:100% + 실제 px 측정 -->
       <div ref="bar" class="mini-bar" @mousedown="onBarMouseDown" @mousemove="onBarMouseMove" @mouseup="onBarMouseUp"
         @mouseleave="onBarMouseUp">
         <div class="bar-bg"></div>
@@ -71,7 +70,7 @@ const totalMs = computed(() => (source.value ? source.value.dt * totalFrames.val
 
 /* ------------ mini bar DOM / width ------------ */
 const bar = ref<HTMLElement | null>(null)
-const barW = ref(0)                  // ✅ 실제 픽셀 너비 (선택/틱/그래프 공통 좌표계)
+const barW = ref(0)
 const sigCanvas = ref<HTMLCanvasElement | null>(null)
 
 let barRO: ResizeObserver | null = null
@@ -308,16 +307,16 @@ function getCss(varName: string, fallback: string) {
   return getComputedStyle(document.documentElement).getPropertyValue(varName).trim() || fallback
 }
 
+const onWinResize = () => { measureBarNow(); scheduleSig() }
+
 /* ------------ lifecycle ------------ */
 onMounted(async () => {
   window.addEventListener('keydown', onKeyDown)
   window.addEventListener('keyup', onKeyUp)
+  window.addEventListener('resize', onWinResize)
 
   await nextTick()
-  setupBarObserver()       // ✅ bar 너비 변화 추적
-
-  const onWinResize = () => { measureBarNow(); scheduleSig() }
-  window.addEventListener('resize', onWinResize)
+  setupBarObserver()
 
   // 다이얼로그가 열릴 때 즉시 측정 & 그림
   watch(open, (v) => {
@@ -336,15 +335,12 @@ onMounted(async () => {
       scheduleSig()
     })
   })
-
-  onBeforeUnmount(() => {
-    window.removeEventListener('resize', onWinResize)
-  })
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeyDown)
   window.removeEventListener('keyup', onKeyUp)
+  window.removeEventListener('resize', onWinResize)
 
   try { barRO?.disconnect() } catch { }
   if (sigRaf) cancelAnimationFrame(sigRaf)
@@ -390,7 +386,6 @@ function onConfirm() {
   box-shadow: var(--shadow);
   padding: 14px;
   box-sizing: border-box;
-  /* ✅ */
 }
 
 .header {
@@ -417,7 +412,6 @@ function onConfirm() {
 .mini-bar {
   position: relative;
   width: 100%;
-  /* ✅ 항상 100% */
   height: 120px;
   /* 조금 여유 있게 */
   border: 1px solid var(--line-1);
@@ -425,9 +419,7 @@ function onConfirm() {
   background: var(--bg-2);
   margin-bottom: 10px;
   overflow: hidden;
-  /* ✅ 넘침 방지 */
   box-sizing: border-box;
-  /* ✅ */
   cursor: default;
   user-select: none;
 }
@@ -443,7 +435,6 @@ function onConfirm() {
   position: absolute;
   inset: 0;
   width: 100%;
-  /* ✅ CSS 100% */
   height: 100%;
   display: block;
   /* inline-canvas 줄바꿈 이슈 방지 */
@@ -459,7 +450,6 @@ function onConfirm() {
   border: 1px solid rgba(79, 163, 255, .6);
   border-radius: 6px;
   box-sizing: border-box;
-  /* ✅ width 계산 안정화 */
 }
 
 .handle {

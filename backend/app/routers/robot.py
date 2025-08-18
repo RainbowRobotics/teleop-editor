@@ -1,28 +1,35 @@
-from fastapi import APIRouter
-from app.models import RobotConnectReq, SimpleOkResponse
-from app.services.robot_service import robot_service
+# backend/app/routers/robot.py
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+from app.robot.robot import ROBOT
 
-router = APIRouter(prefix="", tags=["robot"])
+router = APIRouter(prefix="/robot", tags=["robot"])
 
+class ConnectReq(BaseModel):
+    address: str
 
-@router.post("/robot/connect", response_model=SimpleOkResponse)
-async def connect_robot(req: RobotConnectReq) -> SimpleOkResponse:
-    """
-    Connect to the robot at the specified address.
+class EnableReq(BaseModel):
+    control_mode: str = "position"  # 'position' | 'impedance'
 
-    :param req: Request containing the robot address.
-    :return: Response indicating success or failure of the connection.
-    """
-    ok = robot_service.connect(req.address)
-    return SimpleOkResponse(ok=ok, error=None if ok else "Failed to connect to robot")
+@router.get("/state")
+def state(): return ROBOT.state()
 
+@router.post("/connect")
+def connect(req: ConnectReq):
+    if not ROBOT.connect(req.address):
+        raise HTTPException(500, "Robot connect failed")
+    return ROBOT.state()
 
-@router.post("/robot/disconnect", response_model=SimpleOkResponse)
-async def disconnect_robot() -> SimpleOkResponse:
-    """
-    Disconnect from the robot.
+@router.post("/enable")
+def enable(req: EnableReq):
+    if not ROBOT.connected: raise HTTPException(400, "Not connected")
+    # internally powers rails + tool flange 12V + servo + CM + READY
+    if not ROBOT.enable(control_mode=req.control_mode):
+        raise HTTPException(500, "Enable failed (power/tool/servo/cm)")
+    return ROBOT.state()
 
-    :return: Response indicating success or failure of the disconnection.
-    """
-    robot_service.disconnect()
-    return SimpleOkResponse(ok=True, error=None)
+@router.post("/stop")
+def stop(): ROBOT.stop(); return ROBOT.state()
+
+@router.post("/disconnect")
+def disconnect(): ROBOT.disconnect(); return ROBOT.state()

@@ -91,7 +91,7 @@ class Limits:
 # ----------------- Evaluator -----------------
 class TrajectoryEvaluator:
     """
-    정책 (옵션 B):
+    정책:
       * 겹치는 시간대: crossfade/additive → 램프 사용.
       * 빈 구간(gap): Ruckig 브릿지 (minimum_duration = gap_sec). 램프 미사용.
       * 브릿지 경계 상태(q, v)는 그 시점의 '블렌딩된 실제 상태'를 사용.
@@ -154,6 +154,14 @@ class TrajectoryEvaluator:
                 qb = self._sample_bridge(prev_c, next_c, t_ms)
                 if qb is not None:
                     return qb
+            elif prev_c:
+                _, _, _, t = self._clip_end_state(prev_c)
+                q = self._eval_blended_no_bridge(int(round(t)) - 1)
+                return q.tolist()
+            elif next_c:
+                _, _, _, t = self._clip_start_state(next_c)
+                q = self._eval_blended_no_bridge(int(round(t)) + 1)
+                return q.tolist()
             return _zeros_np().tolist()
 
         return base.tolist()

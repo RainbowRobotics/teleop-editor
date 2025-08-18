@@ -48,11 +48,20 @@ export type ProjectState = {
   _questStaleTimeout: any
 
   backendUrl: string
+  robot: { address: string, connected: boolean, ready: boolean, busy: boolean, phase: null | 'connecting' | 'enabling' | 'disconnecting' }
+  master: { connected: boolean, busy: boolean }
+  gripper: { connected: boolean, homed: boolean, running: boolean, busy: boolean, target_n: [number, number] | null }
+  teleop: { running: boolean, mode: 'position' | 'impedance', busy: boolean }
 
   selectedClipId: string | null
 
-  graphJointMode: 'joint'|'rms'
+  graphJointMode: 'joint' | 'rms'
   graphJointIndex: number
+
+  statusTimer: number | null
+  statusIntervalMs: number
+  statusRunning: boolean
+  statusInFlight: boolean
 }
 
 export const useProjectStore = defineStore('project', {
@@ -89,11 +98,20 @@ export const useProjectStore = defineStore('project', {
 
     // 선택: 백엔드 베이스 URL
     backendUrl: 'http://localhost:8001',
+    robot: { address: '', connected: false, ready: false, busy: false, phase: null },
+    master: { connected: false, busy: false },
+    gripper: { connected: false, homed: false, running: false, target_n: null, busy: false },
+    teleop: { running: false, mode: 'position', busy: false },
 
     selectedClipId: null,
 
-    graphJointMode: 'joint' as 'joint' | 'rms',   // 포지션 RMS만 지원
-    graphJointIndex: 0,                            // 0..23
+    graphJointMode: 'joint' as 'joint' | 'rms',
+    graphJointIndex: 0,
+
+    statusTimer: null,
+    statusIntervalMs: 750,
+    statusRunning: false,
+    statusInFlight: false,
   }),
 
   getters: {
@@ -213,15 +231,6 @@ export const useProjectStore = defineStore('project', {
     },
 
     /* ---------- 연결/제어 ---------- */
-    async connectRobot() {
-      try {
-        const r = await fetch(this.backendUrl + '/api/connect/robot', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ address: this.robotAddress })
-        })
-        this.robotConnected = r.ok
-      } catch { this.robotConnected = false }
-    },
 
     async connectQuest() {
       this.ensureQuestWS();
@@ -327,5 +336,185 @@ export const useProjectStore = defineStore('project', {
       this.graphJointIndex = Math.max(0, Math.min(23, Math.trunc(idx)))
     },
     setGraphMode(m: 'joint' | 'rms') { this.graphJointMode = m },
+
+    // Robot
+    async refreshRobot() {
+      const r = await fetch(`${this.backendUrl}/robot/state`)
+      const s = await r.json()
+      this.robot.address = s.address ?? this.robot.address
+      this.robot.connected = !!s.connected
+      this.robot.ready = !!s.ready && !!s.power_all_on
+    },
+
+    // 3) Connect with busy/phase=connecting
+    async connectRobot(address?: string) {
+      this.robot.busy = true
+      this.robot.phase = 'connecting'
+      try {
+        const body = { address: address ?? this.robot.address ?? '' }
+        const r = await fetch(`${this.backendUrl}/robot/connect`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        })
+        if (!r.ok) throw new Error(await r.text())
+        await this.refreshRobot()
+      } finally {
+        this.robot.busy = false
+        this.robot.phase = null
+      }
+    },
+
+    // 4) Enable with busy/phase=enabling
+    async enableRobot(mode: 'position' | 'impedance' = 'position') {
+      if (!this.robot.connected) throw new Error('Robot not connected')
+      this.robot.busy = true
+      this.robot.phase = 'enabling'
+      try {
+        const r = await fetch(`${this.backendUrl}/robot/enable`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ control_mode: mode })
+        })
+        if (!r.ok) throw new Error(await r.text())
+        await this.refreshRobot()
+      } finally {
+        this.robot.busy = false
+        this.robot.phase = null
+      }
+    },
+
+    // 5) Stop/Disconnect with busy/phase=disconnecting
+    async stopRobot() {
+      this.robot.busy = true
+      this.robot.phase = 'disconnecting'
+      try {
+        await fetch(`${this.backendUrl}/robot/stop`, { method: 'POST' })
+        await this.refreshRobot()
+      } finally {
+        this.robot.busy = false
+        this.robot.phase = null
+      }
+    },
+    async disconnectRobot() {
+      this.robot.busy = true
+      this.robot.phase = 'disconnecting'
+      try {
+        await fetch(`${this.backendUrl}/robot/disconnect`, { method: 'POST' })
+        await this.refreshRobot()
+      } finally {
+        this.robot.busy = false
+        this.robot.phase = null
+      }
+    },
+
+    // 6) One-button flow now shows busy across both connect → enable
+    async smartRobot(address?: string) {
+      if (this.robot.busy) return
+      // OFFLINE → CONNECT → ENABLE
+      if (!this.robot.connected) {
+        await this.connectRobot(address)
+        await this.enableRobot(this.teleop?.mode ?? 'position')
+        return
+      }
+      // CONNECTED/READY → STOP + DISCONNECT
+      if (this.robot.connected) {
+        await this.stopRobot()
+        await this.disconnectRobot()
+      }
+    },
+
+    // Master
+    async refreshMaster() {
+      const r = await fetch(`${this.backendUrl}/master/state`); const s = await r.json()
+      this.master.connected = !!s.connected
+    },
+    async smartMaster() {
+      if (this.master.busy) return; this.master.busy = true
+      try {
+        if (!this.master.connected) await fetch(`${this.backendUrl}/master/connect`, { method: 'POST' })
+        else await fetch(`${this.backendUrl}/master/disconnect`, { method: 'POST' })
+        await this.refreshMaster()
+      } finally { this.master.busy = false }
+    },
+
+    // Gripper (for manual testing; teleop will run it automatically)
+    async refreshGripper() {
+      const r = await fetch(`${this.backendUrl}/gripper/state`); const s = await r.json()
+      this.gripper.connected = !!s.connected; this.gripper.homed = !!s.homed; this.gripper.running = !!s.running
+      this.gripper.target_n = Array.isArray(s.target_n) ? (s.target_n as [number, number]) : null
+    },
+    async smartGripper() {
+      if (this.gripper.busy) return; this.gripper.busy = true
+      try {
+        if (!this.gripper.connected) {
+          await fetch(`${this.backendUrl}/gripper/connect`, { method: 'POST' })
+          await fetch(`${this.backendUrl}/gripper/homing`, { method: 'POST' })
+          await fetch(`${this.backendUrl}/gripper/start`, { method: 'POST' })
+        } else {
+          await fetch(`${this.backendUrl}/gripper/stop`, { method: 'POST' })
+          await fetch(`${this.backendUrl}/gripper/disconnect`, { method: 'POST' })
+        }
+        await this.refreshGripper()
+      } finally { this.gripper.busy = false }
+    },
+    async setGripperNormalized(n: [number, number]) {
+      await fetch(`${this.backendUrl}/gripper/target/n`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ n }),
+      })
+      this.gripper.target_n = n
+    },
+
+    // Teleop
+    async refreshTeleop() {
+      const r = await fetch(`${this.backendUrl}/teleop/state`); const s = await r.json()
+      this.teleop.running = !!s.running; this.teleop.mode = s.mode ?? this.teleop.mode
+    },
+    async toggleTeleop() {
+      if (this.teleop.busy) return; this.teleop.busy = true
+      try {
+        if (!this.teleop.running) {
+          await fetch(`${this.backendUrl}/teleop/start`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: this.teleop.mode }) })
+        } else {
+          await fetch(`${this.backendUrl}/teleop/stop`, { method: 'POST' })
+        }
+        await this.refreshTeleop()
+      } finally { this.teleop.busy = false }
+    },
+
+    // Polling
+    async statusTick() {
+      if (this.statusInFlight) return
+      this.statusInFlight = true
+      try {
+        await Promise.allSettled([
+          this.refreshRobot?.(),
+          this.refreshMaster?.(),
+          this.refreshTeleop?.(),
+          this.refreshGripper?.(),
+          // this.refreshQuestState?.(),   // TODO
+        ])
+      } finally {
+        this.statusInFlight = false
+      }
+    },
+  
+    // Start polling (fires once immediately)
+    startStatusPolling(intervalMs?: number) {
+      if (this.statusTimer) return   // already running
+      if (intervalMs) this.statusIntervalMs = intervalMs
+      this.statusRunning = true
+      // fire immediately so UI updates fast
+      void this.statusTick()
+      this.statusTimer = window.setInterval(() => this.statusTick(), this.statusIntervalMs)
+    },
+  
+    // Stop polling
+    stopStatusPolling() {
+      this.statusRunning = false
+      if (this.statusTimer) {
+        clearInterval(this.statusTimer)
+        this.statusTimer = null
+      }
+    },
   }
 })
