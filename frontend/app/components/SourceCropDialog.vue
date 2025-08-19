@@ -12,6 +12,13 @@
         <div>Duration: {{ (totalMs / 1000).toFixed(2) }} s</div>
       </div>
 
+      <!-- 미니 로봇 프리뷰: 위쪽 -->
+      <div class="preview-on-top" v-if="source && totalFrames > 0">
+        <MiniRobotPreview class="mini-preview" :source="source" :frame="previewFrame" :aspect="16 / 9" model-name="a"
+          model-version="v1.0" />
+      </div>
+
+      <!-- 아래에 mini-bar -->
       <div ref="bar" class="mini-bar" @mousedown="onBarMouseDown" @mousemove="onBarMouseMove" @mouseup="onBarMouseUp"
         @mouseleave="onBarMouseUp">
         <div class="bar-bg"></div>
@@ -48,19 +55,20 @@
   </div>
 </template>
 
-<script setup lang="ts">
+<script setup>
 import { computed, onMounted, onBeforeUnmount, reactive, ref, watch, nextTick } from 'vue'
-import { useProjectStore, type Source } from '@/stores/project'
+import { useProjectStore } from '@/stores/project'
+import MiniRobotPreview from '@/components/MiniRobotPreview.vue'
 
 /* ------------ store ------------ */
 const project = useProjectStore()
 
 /* ------------ v-model ------------ */
-const open = defineModel<boolean>('open', { required: true })
-const sourceId = defineModel<string | null>('sourceId', { default: null })
+const open = defineModel('open', { required: true })
+const sourceId = defineModel('sourceId', { default: null })
 
 /* ------------ source refs ------------ */
-const source = computed<Source | null>(() => {
+const source = computed(() => {
   if (!sourceId.value) return null
   return project.sources[sourceId.value] || null
 })
@@ -69,12 +77,12 @@ const totalFrames = computed(() => source.value?.frames.length ?? 0)
 const totalMs = computed(() => (source.value ? source.value.dt * totalFrames.value * 1000 : 0))
 
 /* ------------ mini bar DOM / width ------------ */
-const bar = ref<HTMLElement | null>(null)
+const bar = ref(null)
 const barW = ref(0)
-const sigCanvas = ref<HTMLCanvasElement | null>(null)
+const sigCanvas = ref(null)
 
-let barRO: ResizeObserver | null = null
-let sigRaf: number | undefined
+let barRO = null
+let sigRaf
 
 function measureBarNow() {
   const el = bar.value
@@ -83,13 +91,11 @@ function measureBarNow() {
   barW.value = Math.max(0, Math.floor(rect.width))
 }
 
-let barROEntry: ResizeObserverEntry | null = null
 function setupBarObserver() {
   if (!bar.value) return
   barRO = new ResizeObserver((entries) => {
     for (const entry of entries) {
       if (entry.target === bar.value) {
-        barROEntry = entry
         barW.value = Math.max(0, Math.floor(entry.contentRect.width))
         scheduleSig()
       }
@@ -112,7 +118,6 @@ watch(source, (s) => {
   if (!s) return
   inFrame.value = 0
   outFrame.value = s.frames.length
-  // 선택이 바뀌면 즉시 다시 그림
   scheduleSig()
 })
 
@@ -127,7 +132,7 @@ const tickXs = computed(() => {
   const s = source.value
   if (!s || barW.value <= 0) return []
   const durMs = s.frames.length * s.dt * 1000
-  const xs: number[] = []
+  const xs = []
   const stepMs = 1000
   for (let t = 0; t <= durMs + 0.1; t += stepMs) {
     const frameAt = Math.min(s.frames.length, Math.round(t / (s.dt * 1000)))
@@ -139,21 +144,20 @@ const tickXs = computed(() => {
 
 /* ------------ snapping ------------ */
 const snap = reactive({ enabled: true })
-function toFrameDelta(dxPx: number) {
+function toFrameDelta(dxPx) {
   const f = dxPx / pxPerFrame.value
   return snap.enabled ? Math.round(f) : f
 }
 
 /* ------------ drag state ------------ */
-type DragMode = 'none' | 'range' | 'left' | 'right'
-const drag: { mode: DragMode; startX: number; startIn: number; startOut: number } = reactive({
-  mode: 'none',
+const drag = reactive({
+  mode: 'none', // 'none' | 'range' | 'left' | 'right'
   startX: 0,
   startIn: 0,
   startOut: 0,
 })
 
-function onBarMouseDown(e: MouseEvent) {
+function onBarMouseDown(e) {
   if (!bar.value || totalFrames.value <= 0) return
   drag.mode = 'range'
   drag.startX = e.clientX
@@ -161,7 +165,7 @@ function onBarMouseDown(e: MouseEvent) {
   drag.startOut = outFrame.value
 }
 
-function onBarMouseMove(e: MouseEvent) {
+function onBarMouseMove(e) {
   if (drag.mode === 'none' || !bar.value || totalFrames.value <= 0) return
   const dx = e.clientX - drag.startX
 
@@ -169,7 +173,6 @@ function onBarMouseMove(e: MouseEvent) {
     let df = toFrameDelta(dx)
     let newIn = drag.startIn + df
     let newOut = drag.startOut + df
-    // clamp
     if (newIn < 0) { newOut += -newIn; newIn = 0 }
     if (newOut > totalFrames.value) {
       const overshoot = newOut - totalFrames.value
@@ -178,37 +181,40 @@ function onBarMouseMove(e: MouseEvent) {
     if (newOut - newIn < 1) newOut = newIn + 1
     inFrame.value = Math.round(newIn)
     outFrame.value = Math.round(newOut)
+    previewFrame.value = inFrame.value
   } else if (drag.mode === 'left') {
     const df = toFrameDelta(dx)
     let nf = drag.startIn + df
     nf = Math.min(nf, outFrame.value - 1)
     nf = Math.max(0, nf)
     inFrame.value = Math.round(nf)
+    previewFrame.value = inFrame.value
   } else if (drag.mode === 'right') {
     const df = toFrameDelta(dx)
     let nf = drag.startOut + df
     nf = Math.max(nf, inFrame.value + 1)
     nf = Math.min(totalFrames.value, nf)
     outFrame.value = Math.round(nf)
+    previewFrame.value = outFrame.value
   }
+
+  // 드래그 중 프리뷰를 inFrame으로 미리보기
 }
 
 function onBarMouseUp() { drag.mode = 'none' }
-function onHandleDown(which: 'left' | 'right', e: MouseEvent) {
+function onHandleDown(which, e) {
   e.preventDefault()
-  drag.mode = which
+  drag.mode = which // 'left' | 'right'
   drag.startX = e.clientX
   drag.startIn = inFrame.value
   drag.startOut = outFrame.value
 }
 
 /* ------------ Alt = snap off ------------ */
-function onKeyDown(e: KeyboardEvent) { if (e.altKey) snap.enabled = false }
-function onKeyUp(e: KeyboardEvent) { if (!e.altKey) snap.enabled = true }
+function onKeyDown(e) { if (e.altKey) snap.enabled = false }
+function onKeyUp(e) { if (!e.altKey) snap.enabled = true }
 
 /* ------------ drawing ------------ */
-const allJointCache = new Map<string, Float32Array>()  // key: `${sourceId}:${N}` → interleaved [24 * N]
-
 function scheduleSig() {
   if (sigRaf) cancelAnimationFrame(sigRaf)
   sigRaf = requestAnimationFrame(drawSignal)
@@ -226,7 +232,7 @@ function drawSignal() {
   el.width = Math.max(1, Math.round(cssW * dpr))
   el.height = Math.max(1, Math.round(cssH * dpr))
 
-  const ctx = el.getContext('2d')!
+  const ctx = el.getContext('2d')
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.clearRect(0, 0, cssW, cssH)
 
@@ -237,20 +243,16 @@ function drawSignal() {
   for (let i = 1; i < 4; i++) { const x = (cssW / 4) * i + 0.5; ctx.moveTo(x, 0); ctx.lineTo(x, cssH) }
   ctx.stroke()
 
-  // 샘플 수: 너비에 맞춰 충분히 촘촘하게
   const frames = s.frames
   const F = frames.length
-  const N = Math.max(2, Math.min(2000, Math.floor(cssW))) // px당~1
-
-  // interleaved [24*N] 버퍼 만들기 (조인트별 개별 정규화)
+  const N = Math.max(2, Math.min(2000, Math.floor(cssW)))
   const buf = new Float32Array(24 * N)
 
   for (let j = 0; j < 24; j++) {
     const off = j * N
-
-    // 1) 다운샘플(선형보간)
+    // downsample (linear)
     for (let i = 0; i < N; i++) {
-      const u = (i * (F - 1)) / (N - 1)              // [0..F-1]
+      const u = (i * (F - 1)) / (N - 1)
       const i0 = Math.floor(u)
       const i1 = Math.min(F - 1, i0 + 1)
       const t = u - i0
@@ -258,8 +260,7 @@ function drawSignal() {
       const v1 = Number(frames[i1]?.[j]) || 0
       buf[off + i] = v0 * (1 - t) + v1 * t
     }
-
-    // 2) 정규화(0..1)
+    // normalize (0..1)
     let mn = Infinity, mx = -Infinity
     for (let i = 0; i < N; i++) {
       const v = buf[off + i] ?? 0
@@ -272,7 +273,7 @@ function drawSignal() {
     }
   }
 
-  // 그림 스타일(라운드 조인/캡)
+  // style
   ctx.lineJoin = 'round'
   ctx.lineCap = 'round'
 
@@ -280,7 +281,7 @@ function drawSignal() {
   const hiColor = getCss('--accent', '#4fa3ff')
   const sel = project.graphJointIndex ?? 0
 
-  const draw = (j: number, color: string, alpha: number, lw: number) => {
+  const draw = (j, color, alpha, lw) => {
     const off = j * N
     ctx.save()
     ctx.globalAlpha = alpha
@@ -301,13 +302,16 @@ function drawSignal() {
   draw(sel, hiColor, 1.0, 2)
 }
 
-
 /* ------------ utils ------------ */
-function getCss(varName: string, fallback: string) {
+function getCss(varName, fallback) {
   return getComputedStyle(document.documentElement).getPropertyValue(varName).trim() || fallback
 }
 
 const onWinResize = () => { measureBarNow(); scheduleSig() }
+
+/* ------------ mini preview frame ------------ */
+const previewFrame = ref(0)
+// watch([inFrame, outFrame], () => { previewFrame.value = inFrame.value })
 
 /* ------------ lifecycle ------------ */
 onMounted(async () => {
@@ -318,22 +322,12 @@ onMounted(async () => {
   await nextTick()
   setupBarObserver()
 
-  // 다이얼로그가 열릴 때 즉시 측정 & 그림
   watch(open, (v) => {
-    if (v) {
-      nextTick(() => {
-        measureBarNow()
-        scheduleSig()
-      })
-    }
+    if (v) nextTick(() => { measureBarNow(); scheduleSig() })
   }, { immediate: true })
 
-  // source 변경 시에도 즉시 갱신
   watch(source, () => {
-    nextTick(() => {
-      measureBarNow()
-      scheduleSig()
-    })
+    nextTick(() => { measureBarNow(); scheduleSig() })
   })
 })
 
@@ -341,13 +335,12 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeyDown)
   window.removeEventListener('keyup', onKeyUp)
   window.removeEventListener('resize', onWinResize)
-
-  try { barRO?.disconnect() } catch { }
+  try { barRO && barRO.disconnect && barRO.disconnect() } catch { }
   if (sigRaf) cancelAnimationFrame(sigRaf)
 })
 
 /* ------------ confirm ------------ */
-const emit = defineEmits<{ (e: 'close'): void; (e: 'added'): void }>()
+const emit = defineEmits(['close', 'added'])
 function onClose() {
   open.value = false
   emit('close')
@@ -408,19 +401,36 @@ function onConfirm() {
   margin-bottom: 8px;
 }
 
+/* preview on top */
+.preview-on-top {
+  margin-bottom: 10px;
+}
+
+.mini-preview {
+  border: 1px solid var(--line-1);
+  border-radius: 8px;
+  background: var(--bg-2);
+  width: 100%;
+  position: relative;
+  /* height는 MiniRobotPreview가 계산 (height prop 또는 aspect 기반) */
+}
+
+.mini-preview canvas {
+  width: 100% !important;
+  height: 100% !important;
+  display: block;
+}
+
 /* mini bar */
 .mini-bar {
   position: relative;
   width: 100%;
   height: 120px;
-  /* 조금 여유 있게 */
   border: 1px solid var(--line-1);
   border-radius: 8px;
   background: var(--bg-2);
-  margin-bottom: 10px;
   overflow: hidden;
   box-sizing: border-box;
-  cursor: default;
   user-select: none;
 }
 
@@ -437,7 +447,6 @@ function onConfirm() {
   width: 100%;
   height: 100%;
   display: block;
-  /* inline-canvas 줄바꿈 이슈 방지 */
   pointer-events: none;
 }
 

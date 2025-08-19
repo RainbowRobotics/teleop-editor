@@ -510,12 +510,13 @@ onUnmounted(() => {
 /* small badge-like text beside the ? icon */
 .tip .tip-text {
   font-size: 14px;
+  font-weight: bold;
   line-height: 1;
   color: var(--text-1);
-  background: var(--bg-1);
-  border: 1px solid var(--line-2);
+  /* background: var(--bg-1); */
+  /* border: 1px solid var(--line-2); */
   border-radius: 6px;
-  padding: 4px 8px;
+  /* padding: 4px 8px; */
   user-select: none;
   white-space: nowrap;
 }

@@ -7,14 +7,16 @@
 
 <script setup>
 /**
- * RobotView.vue
- * - 서버 /ws/motion 에서 모션 포즈(q[24])를 받아 URDF 모델에 반영
- * - Project.jointNames 순서를 사용하여 조인트 이름을 매핑
- * - 30Hz로 조인트/렌더 업데이트 (requestRender 병합)
+ * RobotView.vue (JavaScript)
+ * - /ws/motion 에서 포즈(q[24]) 수신 → URDF 조인트에 반영
+ * - project.jointNames 순서 기반 조인트 매핑
+ * - 30Hz 업데이트 (requestRender 병합 렌더)
+ * - GLB 우선, 실패 시 DAE로 메쉬 로드
+ * - 전역 캐시(useRobotCache) 원본은 __cacheRoot 마킹하고 dispose 금지
  */
 import { onMounted, onBeforeUnmount, ref, watch, nextTick } from 'vue'
 import * as THREE from 'three'
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls'
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import URDFLoader from 'urdf-loader'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader'
 import { ColladaLoader } from 'three/examples/jsm/loaders/ColladaLoader'
@@ -29,11 +31,10 @@ const viewer = ref(null)
 const paneContainer = ref(null)
 
 const project = useProjectStore()
-const motion = new MotionClient(project.backendUrl + '/ws/motion') // ws://.../ws/motion
+const motion = new MotionClient(project.backendUrl + '/ws/motion')
 motion.connect()
 
-// 최근 수신 포즈 (24 DOF)
-const lastPose = ref(null)
+const lastPose = ref(null) // q[24]
 
 // URDF joint map (name -> URDFJoint)
 let urdfJointMap = new Map()
@@ -50,10 +51,10 @@ let gridMesh = null
 let observer = null
 let disposed = false
 
-// 캐시된 로봇 모델 (프로젝트 전역 캐시 composable)
+// 캐시된 로봇 모델
 const { getModel, setModel, isLoaded, setLoaded, getShowCoordinates, setShowCoordinates } = useRobotCache()
 
-// 30Hz로만 갱신
+// 30Hz
 let lastUpdateTime = 0
 const UPDATE_INTERVAL = 1000 / 30
 let jointTimer = null
@@ -68,7 +69,6 @@ function requestRender() {
     renderNow()
   })
 }
-
 function renderNow() {
   if (disposed) return
   renderer.render(scene, camera)
@@ -146,7 +146,7 @@ function addCoordinateHelpers(robot) {
 }
 
 function removeCoordinateHelpers(robot) {
-  robot?.traverse((child) => {
+  robot?.traverse?.((child) => {
     if (child.userData?._coordAxes) { child.remove(child.userData._coordAxes); delete child.userData._coordAxes }
     if (child.userData?._coordLabel) { child.remove(child.userData._coordLabel); delete child.userData._coordLabel }
   })
@@ -154,10 +154,12 @@ function removeCoordinateHelpers(robot) {
 
 function disposeObject(obj) {
   obj?.traverse?.((child) => {
+    // 공유 리소스(__cacheRoot / __fromCacheClone)는 건너뛰기
+    if (child.userData?.__cacheRoot || child.userData?.__fromCacheClone) return
     if (child.geometry) child.geometry.dispose?.()
     if (child.material) {
       const mats = Array.isArray(child.material) ? child.material : [child.material]
-      mats.forEach(m => {
+      mats.forEach((m) => {
         m.map?.dispose?.(); m.lightMap?.dispose?.(); m.aoMap?.dispose?.()
         m.emissiveMap?.dispose?.(); m.bumpMap?.dispose?.(); m.normalMap?.dispose?.()
         m.displacementMap?.dispose?.(); m.roughnessMap?.dispose?.(); m.metalnessMap?.dispose?.()
@@ -180,7 +182,7 @@ function initControls() {
 /* ---------- joints ---------- */
 function bakeJointMap(root) {
   urdfJointMap.clear()
-  root?.traverse((child) => {
+  root?.traverse?.((child) => {
     if (child.type === 'URDFJoint' || child.isURDFJoint) {
       urdfJointMap.set(child.name, child)
     }
@@ -192,8 +194,6 @@ function updateUrdfJoints() {
   const q = lastPose.value
   const jointOrder = project.jointNames
   if (!jointOrder || jointOrder.length === 0) return
-
-  // console.log(lastPose.value)
 
   for (let i = 0; i < jointOrder.length && i < q.length; i++) {
     const name = jointOrder[i]
@@ -218,15 +218,18 @@ function initPane() {
     if (ev.target.label === 'Coords') {
       setShowCoordinates(showCoordinates.value)
       const robot = getModel()
-      if (showCoordinates.value) addCoordinateHelpers(robot)
-      else removeCoordinateHelpers(robot)
-      requestRender()
+      if (robot) {
+        if (showCoordinates.value) addCoordinateHelpers(robot)
+        else removeCoordinateHelpers(robot)
+        requestRender()
+      }
     }
     if (ev.target.label?.startsWith('Grid')) {
       if (gridMesh) {
         scene.remove(gridMesh)
         gridMesh.geometry.dispose?.()
-        gridMesh.material.dispose?.()
+        if (Array.isArray(gridMesh.material)) gridMesh.material.forEach(m => m.dispose?.())
+        else gridMesh.material.dispose?.()
       }
       gridMesh = createGridPlane(gridSize.value, gridDiv.value)
       scene.add(gridMesh)
@@ -286,15 +289,6 @@ onMounted(async () => {
   // Robot model
   const gltfLoader = new GLTFLoader()
   const daeLoader = new ColladaLoader()
-
-  const { getModel, setModel, isLoaded, setLoaded, getShowCoordinates } = useRobotCache()
-
-  const modelName = 'a'        // 필요 시 외부 상태 사용
-  const modelVersion = 'v1.0'
-  const urdfPath = modelVersion === 'v1.0'
-    ? `/models/rby1${modelName}/urdf/model.urdf`
-    : `/models/rby1${modelName}/urdf/model_${modelVersion}.urdf`
-
   const loader = new URDFLoader()
   loader.packages = ''
   loader.loadMeshCb = (path, manager, done) => {
@@ -315,13 +309,21 @@ onMounted(async () => {
       })
   }
 
+  const modelName = 'a'
+  const modelVersion = 'v1.0'
+  const urdfPath = modelVersion === 'v1.0'
+    ? `/models/rby1${modelName}/urdf/model.urdf`
+    : `/models/rby1${modelName}/urdf/model_${modelVersion}.urdf`
+
   if (isLoaded() && getModel()) {
     const robotModel = getModel()
+    if (robotModel && !robotModel.userData.__cacheRoot) robotModel.userData.__cacheRoot = true
     scene.add(robotModel)
     if (getShowCoordinates()) addCoordinateHelpers(robotModel)
     bakeJointMap(robotModel)
   } else {
     loader.load(urdfPath, (urdf) => {
+      urdf.userData.__cacheRoot = true
       setModel(urdf)
       setLoaded(true)
       scene.add(urdf)
@@ -349,14 +351,9 @@ onMounted(async () => {
   requestRender()
 
   // Motion WS events
-  motion.onOpen(() => {
-    // 연결 직후 최신 프로젝트/포즈 요청 (타임라인에서 set_project를 이미 보냈다면 seek만 해도 됨)
-    motion.seek(0)
-  })
+  motion.onOpen(() => { motion.seek(0) })
   motion.onPose((_t, q) => {
-    // console.log('Received:', q)
     lastPose.value = q
-    // 즉시 1회 반영해도 좋음
     updateUrdfJoints()
     requestRender()
   })
@@ -376,8 +373,17 @@ onBeforeUnmount(() => {
   disposed = true
   if (jointTimer) clearInterval(jointTimer)
   if (observer && viewer.value) observer.unobserve(viewer.value)
+
+  // 로봇 캐시 원본은 씬에서만 제거하고 dispose 금지
+  try {
+    const robotModel = getModel()
+    if (robotModel) scene.remove(robotModel)
+  } catch {}
+
   try { controls?.dispose?.() } catch {}
   try { renderer?.dispose?.() } catch {}
+
+  // scene 내부 다른(비공유) 리소스만 정리
   try { disposeObject(scene) } catch {}
 })
 </script>
@@ -388,17 +394,12 @@ onBeforeUnmount(() => {
   height: 100%;
   position: relative;
 }
-
 .viewer-container {
   width: 100%;
   height: 100%;
   overflow: hidden;
 }
-
-.viewer-container * {
-  touch-action: auto !important;
-}
-
+.viewer-container * { touch-action: auto !important; }
 .tweak-pane-container {
   position: absolute;
   top: 8px;
