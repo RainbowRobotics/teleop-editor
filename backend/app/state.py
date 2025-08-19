@@ -28,7 +28,8 @@ class RuntimeState:
         self.quest_seq: int = 0
 
         # Quest 헤드 마운트
-        self._quest_head_pose: np.ndarray = None
+        self._quest_head_position: np.ndarray = None
+        self._quest_head_quat: np.ndarray = None
 
         # Project state
         lim = Limits(v_max=DEFAULT_V_MAX, a_max=DEFAULT_A_MAX, j_max=DEFAULT_J_MAX)
@@ -46,12 +47,16 @@ class RuntimeState:
             )
 
     @property
-    def quest_head_pose(self) -> Optional[np.ndarray]:
-        """Get the quest head pose in a thread-safe manner."""
+    def quest_head_position(self) -> Optional[np.ndarray]:
+        """Get the quest head position in a thread-safe manner."""
         with self._lock:
-            if self._quest_head_pose is None:
-                return None
-            return self._quest_head_pose.copy()
+            return self._quest_head_position.copy()
+
+    @property
+    def quest_head_quat(self) -> Optional[np.ndarray]:
+        """Get the quest head position in a thread-safe manner."""
+        with self._lock:
+            return self._quest_head_quat.copy()
 
     @property
     def quest_state(self) -> Optional[dict]:
@@ -65,23 +70,9 @@ class RuntimeState:
         with self._lock:
             self._quest_state = value
 
-            T_conv = np.array(
-                [
-                    [0, -1, 0, 0],
-                    [0, 0, 1, 0],
-                    [1, 0, 0, 0],
-                    [0, 0, 0, 1],
-                ]
-            )
-
             head_controller = self._quest_state["head"]
-            self._quest_head_pose = (
-                T_conv.T
-                @ self._pose_to_se3(
-                    head_controller["position"], head_controller["rotation"]
-                )
-                @ T_conv
-            )
+            self._quest_head_position = np.asarray(head_controller["position"], dtype=np.float64)
+            self._quest_head_quat = np.asarray(head_controller["rotation"], dtype=np.float64)
 
     def set_project(self, project: PydProject):
         rt = to_runtime(project)

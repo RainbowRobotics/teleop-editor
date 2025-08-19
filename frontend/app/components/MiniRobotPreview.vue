@@ -158,7 +158,7 @@ onMounted(async () => {
     camera.lookAt(0, 0, 1)
 
     renderer = new THREE.WebGLRenderer({
-        antialias: true,
+        antialias: false,
         powerPreference: 'high-performance',
         precision: 'highp',
     })

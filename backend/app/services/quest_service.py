@@ -106,6 +106,7 @@ class QuestService:
                         logging.error(f"Error in UDP listener: {e}")
         finally:
             State.quest_udp_running = False
+            State.quest_udp_bind = None
             logging.info("UDP listener thread exiting")
 
 

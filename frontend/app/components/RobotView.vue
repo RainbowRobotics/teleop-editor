@@ -31,8 +31,7 @@ const viewer = ref(null)
 const paneContainer = ref(null)
 
 const project = useProjectStore()
-const motion = new MotionClient(project.backendUrl + '/ws/motion')
-motion.connect()
+let motion = null
 
 const lastPose = ref(null) // q[24]
 
@@ -199,7 +198,7 @@ function updateUrdfJoints() {
     const name = jointOrder[i]
     const joint = urdfJointMap.get(name)
     if (!joint) continue
-    try { joint.setJointValue(q[i]) } catch {}
+    try { joint.setJointValue(q[i]) } catch { }
   }
 }
 
@@ -245,6 +244,12 @@ onMounted(async () => {
   const width = container.clientWidth
   const height = container.clientHeight
 
+  if (motion) { }
+  else {
+    motion = new MotionClient(project.backendUrl + '/ws/motion')
+    motion.connect()
+  }
+
   // Scene
   scene = new THREE.Scene()
   scene.background = new THREE.Color(0x212121)
@@ -257,7 +262,7 @@ onMounted(async () => {
 
   // Renderer
   renderer = new THREE.WebGLRenderer({
-    antialias: true,
+    antialias: false,
     powerPreference: 'high-performance',
     precision: 'highp',
   })
@@ -378,13 +383,13 @@ onBeforeUnmount(() => {
   try {
     const robotModel = getModel()
     if (robotModel) scene.remove(robotModel)
-  } catch {}
+  } catch { }
 
-  try { controls?.dispose?.() } catch {}
-  try { renderer?.dispose?.() } catch {}
+  try { controls?.dispose?.() } catch { }
+  try { renderer?.dispose?.() } catch { }
 
   // scene 내부 다른(비공유) 리소스만 정리
-  try { disposeObject(scene) } catch {}
+  try { disposeObject(scene) } catch { }
 })
 </script>
 
@@ -394,12 +399,17 @@ onBeforeUnmount(() => {
   height: 100%;
   position: relative;
 }
+
 .viewer-container {
   width: 100%;
   height: 100%;
   overflow: hidden;
 }
-.viewer-container * { touch-action: auto !important; }
+
+.viewer-container * {
+  touch-action: auto !important;
+}
+
 .tweak-pane-container {
   position: absolute;
   top: 8px;

@@ -16,6 +16,7 @@ class MasterArmManager:
         self.master: Optional[rby.upc.MasterArm] = None
         self.connected = False
         self.running = False
+        self.zero_torque = False
 
     def connect(self) -> bool:
         print(self.device)
@@ -36,6 +37,7 @@ class MasterArmManager:
             raise RuntimeError("Master not connected")
         if self.running:
             return
+        self.zero_torque = False
         self.master.start_control(cb)
         self.running = True
 
@@ -43,6 +45,9 @@ class MasterArmManager:
         if not self.running:
             return
         try:
+            self.zero_torque = True
+            time.sleep(Settings.master_arm_loop_period * 2)
+            
             self.master.stop_control()
         finally:
             self.running = False

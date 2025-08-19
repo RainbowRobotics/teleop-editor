@@ -44,7 +44,7 @@ class RobotManager:
         self.tool_flange_12v = {}
         
         # FOR DEBUGGING
-        self.is_simulation = True
+        self.is_simulation = False
 
     def connect(self, address: str) -> bool:
         self.address = address
@@ -300,7 +300,7 @@ class RobotManager:
         except Exception:
             pass
         try:
-            self.robot.power_off("12v" if not self.is_simulation else ".*")
+            self.robot.power_off("12v" if not self.is_simulation else "")
         except Exception:
             pass
         self.connected = False

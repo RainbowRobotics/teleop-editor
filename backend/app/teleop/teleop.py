@@ -11,10 +11,12 @@ from app.robot.common import Settings
 
 class TeleopManager:
 
+    QUEST_LPF = 0.98
+
     # LIMITS
-    LINEAR_VECLOITY_LIMIT = 1.0  # m/s
-    ANGULAR_VELOCITY_LIMIT = 3.14  # rad/s
-    ACCELERATION_LIMIT_SCALING = 1.0  #
+    LINEAR_VECLOITY_LIMIT = 4.0  # m/s
+    ANGULAR_VELOCITY_LIMIT = 12  # rad/s
+    ACCELERATION_LIMIT_SCALING = 0.3  #
     DEFAULT_LINEAR_ACCELERATION = 10.0
     DEFAULT_ANGULAR_ACCELERATION = 10.0
 
@@ -32,6 +34,15 @@ class TeleopManager:
         # latched
         self.right_q = None
         self.left_q = None
+
+        # Cache
+        self.torso_last_pose = None
+        self.torso_ref_pose = None
+        self.quest_head_ref_pose = None
+
+        self.quest_head_pose = None
+        self.quest_head_position = None
+        self.quest_head_quat = None
 
     def start(self, control_mode: str = "position"):
         if self.running:
@@ -66,10 +77,14 @@ class TeleopManager:
         if (torso_pose is None) or (right_arm_q is None) or (left_arm_q is None):
             raise RuntimeError("로봇에서 정보를 가지고 오지 못했습니다.")
 
-        torso_last_pose = torso_pose
-        torso_ref_pose = torso_last_pose
+        self.torso_last_pose = torso_pose.copy()
+        self.torso_ref_pose = self.torso_last_pose.copy()
 
-        quest_head_ref_pose = None
+        self.quest_head_ref_pose = None
+
+        self.quest_head_pose = None
+        self.quest_head_position = None
+        self.quest_head_quat = None
 
         # CartesianCommandBuilder와 CartesianImpedanceControlCommandBuilder는 add_target 인자가 조금 다르기 때문에 나눠서 빌더를 생성해 줍니다.
         if self.position_mode:
@@ -178,6 +193,8 @@ class TeleopManager:
         )
 
         def loop(state: rby.upc.MasterArm.State):
+            global head_position, head_quat
+
             # latch
             if self.right_q is None:
                 self.right_q = state.q_joint[0:7]
@@ -232,7 +249,7 @@ class TeleopManager:
                 tgt_pos_l = None
             else:
                 mode_l = rby.DynamixelBus.CurrentBasedPositionControlMode
-                tgt_torque_l = np.array([5] * 7)
+                tgt_torque_l = np.array([2] * 7)
                 tgt_pos_l = self.left_q
 
             # collision check
@@ -254,15 +271,37 @@ class TeleopManager:
             if (
                 State.quest_udp_running
             ):  # TODO 실제로 데이터가 들어오고 있는지 확인이 필요합니다.
-                quest_head_pose = State.quest_head_pose
-                if quest_head_ref_pose is None:
-                    quest_head_ref_pose = quest_head_pose
+                hp = State.quest_head_position
+                hq = State.quest_head_quat
+
+                if self.quest_head_position is None:
+                    self.quest_head_position = hp
+                if self.quest_head_quat is None:
+                    self.quest_head_quat = hq
+
+                self.quest_head_position = self.QUEST_LPF * self.quest_head_position + (1 - self.QUEST_LPF) * hp
+                self.quest_head_quat = self.QUEST_LPF * self.quest_head_quat + (1 - self.QUEST_LPF) * hq
+                T_conv = np.array(
+                    [
+                        [0, -1, 0, 0],
+                        [0, 0, 1, 0],
+                        [1, 0, 0, 0],
+                        [0, 0, 0, 1],
+                    ]
+                )
+                self.quest_head_pose = (
+                    T_conv.T
+                    @ State._pose_to_se3(self.quest_head_position, self.quest_head_quat)
+                    @ T_conv
+                )
+                if self.quest_head_ref_pose is None:
+                    self.quest_head_ref_pose = self.quest_head_pose.copy()
 
                 if state.button_right.button and state.button_left.button:
-                    last_torso_pose = (
-                        torso_ref_pose
-                        @ np.linalg.inv(quest_head_ref_pose)
-                        @ quest_head_pose
+                    self.torso_last_pose = (
+                        self.torso_ref_pose
+                        @ np.linalg.inv(self.quest_head_ref_pose)
+                        @ self.quest_head_pose
                     )
 
                     self.torso_minimum_time = max(
@@ -284,7 +323,7 @@ class TeleopManager:
                             .add_target(
                                 "base",
                                 "link_torso_5",
-                                last_torso_pose,
+                                self.torso_last_pose,
                                 self.LINEAR_VECLOITY_LIMIT,  # TODO 튜닝 필요합니다.
                                 self.ANGULAR_VELOCITY_LIMIT,  # TODO 튜닝 필요합니다.
                                 self.ACCELERATION_LIMIT_SCALING,  # TODO 튜닝 필요합니다.
@@ -315,7 +354,7 @@ class TeleopManager:
                             .add_target(
                                 "base",
                                 "link_torso_5",
-                                last_torso_pose,
+                                self.torso_last_pose,
                                 self.LINEAR_VECLOITY_LIMIT,  # TODO 튜닝 필요합니다.
                                 self.ANGULAR_VELOCITY_LIMIT,  # TODO 튜닝 필요합니다.
                                 self.DEFAULT_LINEAR_ACCELERATION
@@ -328,10 +367,11 @@ class TeleopManager:
                     rc.set_torso_command(torso_builder)
 
                 else:
-                    torso_ref_pose = torso_last_pose
+                    self.torso_ref_pose = self.torso_last_pose.copy()
+                    self.quest_head_ref_pose = self.quest_head_pose.copy()
                     self.torso_minimum_time = 0.8
             else:
-                quest_head_ref_pose = None
+                self.quest_head_ref_pose = None
                 self.torso_minimum_time = 1.0
 
             if state.button_right.button and not is_collision:
@@ -420,13 +460,19 @@ class TeleopManager:
             else:
                 self.left_minimum_time = 0.8
 
-            ROBOT.stream.send_command(
-                rby.RobotCommandBuilder().set_command(
-                    rby.ComponentBasedCommandBuilder().set_body_command(rc)
+            try:
+                ROBOT.stream.send_command(
+                    rby.RobotCommandBuilder().set_command(
+                        rby.ComponentBasedCommandBuilder().set_body_command(rc)
+                    )
                 )
-            )
+            except:
+                pass
 
             # return MasterArm control input (modes/torque/pos)
+            if MASTER.zero_torque:
+                tgt_torque_l.fill(0)
+                tgt_torque_r.fill(0)
             cin = rby.upc.MasterArm.ControlInput()
             cin.target_operating_mode[0:7].fill(mode_r)
             cin.target_torque[0:7] = tgt_torque_r

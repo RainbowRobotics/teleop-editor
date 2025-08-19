@@ -82,9 +82,9 @@ export const useProjectStore = defineStore('project', {
     blendDefaults: { mode: 'override', inMs: 120, outMs: 120, curve: 'easeInOut', weight: 1.0, priority: 0 },
 
     // 연결 관련
-    localAddress: '192.168.100.56',
+    localAddress: '192.168.0.28',
     robotAddress: '192.168.30.1:50051',
-    questAddress: '192.168.100.67',
+    questAddress: '192.168.0.36',
     robotConnected: false,
     questConnected: false,
 
@@ -97,7 +97,7 @@ export const useProjectStore = defineStore('project', {
     _questStaleTimeout: 0,
 
     // 선택: 백엔드 베이스 URL
-    backendUrl: 'http://localhost:8001',
+    backendUrl: '',
     robot: { address: '', connected: false, ready: false, busy: false, phase: null },
     master: { connected: false, busy: false },
     gripper: { connected: false, homed: false, running: false, target_n: null, busy: false },
@@ -218,6 +218,8 @@ export const useProjectStore = defineStore('project', {
 
     // (선택) 백엔드 저장/로드
     async saveProjectToBackend() {
+      if (this.backendUrl == '') return
+
       await fetch(this.backendUrl + '/api/project', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(this.toSnapshot())
@@ -256,6 +258,20 @@ export const useProjectStore = defineStore('project', {
         console.error(e);
         this.questConnected = false;
       }
+    },
+
+    async disconnectQuest() {
+      this.stopQuestWS();
+
+      try {
+        const r = await fetch(this.backendUrl + '/quest/disconnect', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        });
+      } catch (e) {
+        console.error(e);
+      }
+      this.questConnected = false;
     },
 
     play() { this.player.playing = true },
@@ -339,6 +355,8 @@ export const useProjectStore = defineStore('project', {
 
     // Robot
     async refreshRobot() {
+      if (this.backendUrl == '') return
+
       const r = await fetch(`${this.backendUrl}/robot/state`)
       const s = await r.json()
       // console.log(s) // TODO DEBUG
@@ -424,6 +442,8 @@ export const useProjectStore = defineStore('project', {
 
     // Master
     async refreshMaster() {
+      if (this.backendUrl == '') return
+
       const r = await fetch(`${this.backendUrl}/master/state`); const s = await r.json()
       this.master.connected = !!s.connected
     },
@@ -438,6 +458,8 @@ export const useProjectStore = defineStore('project', {
 
     // Gripper (for manual testing; teleop will run it automatically)
     async refreshGripper() {
+      if (this.backendUrl == '') return
+
       const r = await fetch(`${this.backendUrl}/gripper/state`); const s = await r.json()
       this.gripper.connected = !!s.connected; this.gripper.homed = !!s.homed; this.gripper.running = !!s.running
       this.gripper.target_n = Array.isArray(s.target_n) ? (s.target_n as [number, number]) : null
@@ -467,6 +489,8 @@ export const useProjectStore = defineStore('project', {
 
     // Teleop
     async refreshTeleop() {
+      if (this.backendUrl == '') return
+
       const r = await fetch(`${this.backendUrl}/teleop/state`); const s = await r.json()
       this.teleop.running = !!s.running; this.teleop.mode = s.mode ?? this.teleop.mode
     },

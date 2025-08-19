@@ -306,6 +306,8 @@ onMounted(async () => {
   await s.refreshTeleop?.()
   await s.refreshGripper?.()
 
+  store.ensureQuestWS?.()
+
   // seed slider from current state
   if (Array.isArray(gripper.value.target_n)) {
     gripR.value = gripper.value.target_n[0] ?? 0

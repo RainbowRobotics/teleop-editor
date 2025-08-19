@@ -165,8 +165,7 @@ const { clips, sources, lengthMs } = storeToRefs(project)
 const isRms = computed(() => project.graphJointMode === 'rms')
 
 /* ---------- Motion WS ---------- */
-const motion = new MotionClient(project.backendUrl + '/ws/motion')
-motion.connect()
+let motion = null as MotionClient | null
 
 /* ---------- 스케일/오프셋 ---------- */
 const zoom = ref(0.1)               // px per ms
@@ -236,8 +235,8 @@ function genTicks() {
 }
 
 /* ---------- Motion push ---------- */
-const pushProject = throttle(() => motion.setProject(project.toSnapshot()), 80)
-const pushSeek = throttle((ms: number) => motion.seek(Math.round(ms)), 33) // ~30Hz
+const pushProject = throttle(() => motion?.setProject(project.toSnapshot()), 80)
+const pushSeek = throttle((ms: number) => motion?.seek(Math.round(ms)), 33) // ~30Hz
 
 watch([clips, sources, () => project.lengthMs], pushProject, { deep: true })
 watch(markerMs, (ms) => pushSeek(ms))
@@ -451,6 +450,9 @@ function setCursor(container: HTMLElement, v: string) {
 onMounted(async () => {
   await nextTick()
 
+  motion = new MotionClient(project.backendUrl + '/ws/motion')
+  motion.connect()
+
   // 초기 폭 측정: 레이아웃 안정화 프레임까지 재시도
   const tryMeasure = () => {
     measureStageWidth()
@@ -487,8 +489,8 @@ onMounted(async () => {
   requestSparksRedraw()
 
   motion.onOpen(() => {
-    motion.setProject(project.toSnapshot())
-    motion.seek(Math.round(markerMs.value))
+    motion?.setProject(project.toSnapshot())
+    motion?.seek(Math.round(markerMs.value))
   })
 })
 
