@@ -109,7 +109,7 @@ export const useProjectStore = defineStore('project', {
     graphJointIndex: 0,
 
     statusTimer: null,
-    statusIntervalMs: 750,
+    statusIntervalMs: 1000,
     statusRunning: false,
     statusInFlight: false,
   }),
@@ -341,6 +341,7 @@ export const useProjectStore = defineStore('project', {
     async refreshRobot() {
       const r = await fetch(`${this.backendUrl}/robot/state`)
       const s = await r.json()
+      // console.log(s) // TODO DEBUG
       this.robot.address = s.address ?? this.robot.address
       this.robot.connected = !!s.connected
       this.robot.ready = !!s.ready && !!s.power_all_on

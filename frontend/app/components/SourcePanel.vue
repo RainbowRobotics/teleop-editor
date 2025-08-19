@@ -4,7 +4,7 @@
     <div class="panel-header">
       <div class="title">
         <span>Sources</span>
-        <span class="count">{{ sourceCount }} items</span>
+        <!-- <span class="count">{{ sourceCount }} items</span> -->
       </div>
       <div class="actions">
         <button class="btn ghost" @click="onClickImport">
@@ -50,8 +50,8 @@
                 placeholder="Enter source name"
               />
               <div class="edit-actions">
-                <button class="btn ghost sml" @click="commitEdit">저장</button>
-                <button class="btn ghost sml" @click="cancelEdit">취소</button>
+                <!-- <button class="btn ghost sml" @click="commitEdit">저장</button>
+                <button class="btn ghost sml" @click="cancelEdit">취소</button> -->
               </div>
             </div>
 
@@ -65,6 +65,12 @@
             <button class="btn ghost" @click="openCrop(s.id)">
               <svg viewBox="0 0 24 24" class="ico"><path d="M3 5h4V3H3a2 2 0 0 0-2 2v4h2V5Zm14-2v2h4v4h2V5a2 2 0 0 0-2-2h-4ZM3 15H1v4a2 2 0 0 0 2 2h4v-2H3v-4Zm20 0h-2v4h-4v2h4a2 2 0 0 0 2-2v-4ZM8 11h8v2H8v-2Z"/></svg>
               Add as Clip…
+            </button>
+
+            <button class="btn ghost danger" @click="onRemoveSource(s.id)">
+              <svg viewBox="0 0 24 24" class="ico">
+                <path d="M6 7h12l-1 14H7L6 7zm9-3h-6l-1 1H5v2h14V5h-3l-1-1z"/>
+              </svg>
             </button>
           </div>
         </div>
@@ -88,7 +94,7 @@ import SourceCropDialog from '@/components/SourceCropDialog.vue'
 import { importCsv } from '@/lib/csvImport'
 
 const store = useProjectStore()
-const { sources } = storeToRefs(store)
+const { sources, clips } = storeToRefs(store)
 
 const sourceArray = computed(() => Object.values(sources.value))
 const sourceCount = computed(() => sourceArray.value.length)
@@ -159,6 +165,45 @@ function onCropClosed() {
 function onClipAdded() {
   // 필요하면 타임라인 refresh 트리거(보통 watch(store.clips)로 자동 반영)
 }
+
+function onRemoveSource(sourceId: string) {
+  const usedBy = clips.value.filter(c => c.sourceId === sourceId).map(c => c.id)
+  const cnt = usedBy.length
+  const ok = confirm(
+    cnt > 0
+      ? `이 소스를 참조하는 클립 ${cnt}개도 함께 삭제됩니다.\n계속할까요?`
+      : '이 소스를 삭제할까요?'
+  )
+  if (!ok) return
+
+  // 편집 중이면 정리
+  if (editingId.value === sourceId) cancelEdit()
+  if (cropOpen.value && cropSourceId.value === sourceId) onCropClosed()
+
+  // 1) 참조 클립 제거 (스토어에 전용 API가 없을 수도 있어 안전하게 처리)
+  const st: any = store as any
+  if (typeof st.removeClipsBySource === 'function') {
+    st.removeClipsBySource(sourceId)
+  } else {
+    for (const cid of usedBy) {
+      if (typeof st.removeClip === 'function') st.removeClip(cid)
+      else if (typeof st.deleteClip === 'function') st.deleteClip(cid)
+      else {
+        // 마지막 방어선: 배열에서 직접 제거 (Pinia state 구조를 가정)
+        const idx = store.clips.findIndex((c: any) => c.id === cid)
+        if (idx >= 0) store.clips.splice(idx, 1)
+      }
+    }
+  }
+
+  // 2) 소스 제거
+  if (typeof st.removeSource === 'function') st.removeSource(sourceId)
+  else if (typeof st.deleteSource === 'function') st.deleteSource(sourceId)
+  else {
+    // 마지막 방어선: Record에서 직접 제거
+    if (store.sources[sourceId]) delete (store.sources as any)[sourceId]
+  }
+}
 </script>
 
 <style scoped>
@@ -168,6 +213,7 @@ function onClipAdded() {
   border-radius: 12px;
   box-shadow: var(--shadow, 0 10px 30px rgba(0,0,0,.35));
   padding: 12px;
+  overflow: auto;
 }
 .panel-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; background-color: var(--bg-1) !important; }
 .title { display: flex; align-items: baseline; gap: 10px; font-weight: 600; color: var(--text-0, #e8ecf1); }

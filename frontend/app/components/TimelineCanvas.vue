@@ -1,3 +1,4 @@
+<!-- components/TimelineCanvas.vue -->
 <template>
   <div ref="timelineContainer" class="panel timeline-panel">
     <div class="panel-title timeline-title">

@@ -10,7 +10,8 @@ dependencies = [
     "pydantic>=2.11.7",
     "python-dotenv>=1.1.1",
     "python-multipart>=0.0.20",
-    "rby1-sdk>=0.8.1",
+    "rby1-sdk==0.8.2",
     "ruckig>=0.15.3",
+    "scipy>=1.15.3",
     "uvicorn[standard]>=0.35.0",
 ]

@@ -14,6 +14,7 @@ export class MotionClient {
     private onOpenListeners: OpenListener[] = []
     private onErrorListeners: ErrorListener[] = []
     private _connected = false
+    private _reconnect = 0
 
     // 프론트에서 사용할 최신 project 스냅샷(필요 시 jointNames 참고)
     private _lastProject: any | null = null
@@ -29,6 +30,7 @@ export class MotionClient {
 
         this.ws.onopen = () => {
             this._connected = true
+            this._reconnect = 0
             this.onOpenListeners.forEach(f => f())
         }
         this.ws.onerror = (e) => {
@@ -36,8 +38,10 @@ export class MotionClient {
         }
         this.ws.onclose = () => {
             this._connected = false
-            // 자동 재연결 (간단)
-            setTimeout(() => this.connect(), 1000)
+            if (this._reconnect < 5) { // 최대 연속 5번까지 재시도를 수행하고 그래도 연결이 안되면 종료
+                this._reconnect += 1
+                setTimeout(() => this.connect(), 1000)
+            }
         }
         this.ws.onmessage = (ev) => {
             try {

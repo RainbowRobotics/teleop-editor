@@ -4,9 +4,14 @@ from dataclasses import dataclass
 
 class Settings:
     master_arm_loop_period = 1 / 100
+    
     impedance_stiffness = 30
     impedance_damping_ratio = 1.0
     impedance_torque_limit = 10.0
+    
+    torso_impedance_stiffness = 400
+    torso_impedance_damping_ratio = 1.0
+    torso_impedance_torque_limit = 600
 
 
 @dataclass

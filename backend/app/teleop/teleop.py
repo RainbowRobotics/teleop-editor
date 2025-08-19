@@ -5,10 +5,19 @@ import rby1_sdk as rby
 from app.robot.robot import ROBOT
 from app.robot.master_arm import MASTER
 from app.robot.gripper import GRIPPER
+from app.state import State
 from app.robot.common import Settings
 
 
 class TeleopManager:
+
+    # LIMITS
+    LINEAR_VECLOITY_LIMIT = 1.0  # m/s
+    ANGULAR_VELOCITY_LIMIT = 3.14  # rad/s
+    ACCELERATION_LIMIT_SCALING = 1.0  #
+    DEFAULT_LINEAR_ACCELERATION = 10.0
+    DEFAULT_ANGULAR_ACCELERATION = 10.0
+
     def __init__(self) -> None:
         self.running = False
         self.position_mode = (
@@ -16,6 +25,7 @@ class TeleopManager:
         )
 
         # timers
+        self.torso_minimum_time = 1.0
         self.right_minimum_time = 1.0
         self.left_minimum_time = 1.0
 
@@ -36,6 +46,7 @@ class TeleopManager:
         self.left_q = None
         self.right_minimum_time = 1.0
         self.left_minimum_time = 1.0
+        control_hold_time = 1e6
 
         # ensure gripper up
         if not GRIPPER.connected:
@@ -48,7 +59,123 @@ class TeleopManager:
         if not ROBOT.create_stream():
             raise RuntimeError("Cannot create stream")
 
-        ROBOT.stream.send_command(ROBOT.build_ready_command(control_mode == "position", 1e6))
+        # 현재 로봇의 상태를 가지고 와서 torso는 Cartesian 명령으로, right_arm/left_arm 은 Joint 명령으로 보냄
+        # control_mode에 따라서 다르게 Cartesian/JointPositionImpedance 할지, CartesianControl/JointPosition 이렇게 나눠서 진행
+
+        torso_pose, right_arm_q, left_arm_q = ROBOT.get_current_pose()
+        if (torso_pose is None) or (right_arm_q is None) or (left_arm_q is None):
+            raise RuntimeError("로봇에서 정보를 가지고 오지 못했습니다.")
+
+        torso_last_pose = torso_pose
+        torso_ref_pose = torso_last_pose
+
+        quest_head_ref_pose = None
+
+        # CartesianCommandBuilder와 CartesianImpedanceControlCommandBuilder는 add_target 인자가 조금 다르기 때문에 나눠서 빌더를 생성해 줍니다.
+        if self.position_mode:
+            torso_builder = (
+                rby.CartesianCommandBuilder()
+                .set_command_header(
+                    rby.CommandHeaderBuilder().set_control_hold_time(control_hold_time)
+                )
+                .set_stop_joint_position_tracking_error(0)
+                .set_stop_orientation_tracking_error(0)
+                .set_stop_joint_position_tracking_error(0)
+                .add_target(
+                    "base",
+                    "link_torso_5",
+                    torso_pose,
+                    self.LINEAR_VECLOITY_LIMIT,
+                    self.ANGULAR_VELOCITY_LIMIT,
+                    self.ACCELERATION_LIMIT_SCALING,
+                )
+                .set_minimum_time(5)
+            )
+        else:
+            torso_builder = (
+                rby.CartesianImpedanceControlCommandBuilder()
+                .set_command_header(
+                    rby.CommandHeaderBuilder().set_control_hold_time(control_hold_time)
+                )
+                .set_joint_stiffness(
+                    [Settings.torso_impedance_stiffness] * len(ROBOT.model.torso_idx)
+                )
+                .set_joint_torque_limit(
+                    [Settings.torso_impedance_torque_limit] * len(ROBOT.model.torso_idx)
+                )
+                .add_joint_limit("torso_1", -0.523598776, 1.3)
+                .add_joint_limit("torso_2", -2.617993878, -0.2)
+                .set_stop_joint_position_tracking_error(0)
+                .set_stop_orientation_tracking_error(0)
+                .set_stop_joint_position_tracking_error(0)
+                .add_target(
+                    "base",
+                    "link_torso_5",
+                    torso_pose,
+                    self.LINEAR_VECLOITY_LIMIT,
+                    self.ANGULAR_VELOCITY_LIMIT,
+                    self.DEFAULT_LINEAR_ACCELERATION * self.ACCELERATION_LIMIT_SCALING,
+                    self.DEFAULT_ANGULAR_ACCELERATION * self.ACCELERATION_LIMIT_SCALING,
+                )
+                .set_minimum_time(5)
+            )
+
+        right_builder = (
+            rby.JointPositionCommandBuilder()
+            if self.position_mode
+            else rby.JointImpedanceControlCommandBuilder()
+        )
+        (
+            right_builder.set_command_header(
+                rby.CommandHeaderBuilder().set_control_hold_time(control_hold_time)
+            )
+            .set_position(right_arm_q)
+            .set_minimum_time(5)
+        )
+        if not self.position_mode:
+            (
+                right_builder.set_stiffness(
+                    [Settings.impedance_stiffness] * len(ROBOT.model.right_arm_idx)
+                )
+                .set_damping_ratio(Settings.impedance_damping_ratio)
+                .set_torque_limit(
+                    [Settings.impedance_torque_limit] * len(ROBOT.model.right_arm_idx)
+                )
+            )
+
+        left_builder = (
+            rby.JointPositionCommandBuilder()
+            if self.position_mode
+            else rby.JointImpedanceControlCommandBuilder()
+        )
+        (
+            left_builder.set_command_header(
+                rby.CommandHeaderBuilder().set_control_hold_time(control_hold_time)
+            )
+            .set_position(left_arm_q)
+            .set_minimum_time(5)
+        )
+        if not self.position_mode:
+            (
+                left_builder.set_stiffness(
+                    [Settings.impedance_stiffness] * len(ROBOT.model.left_arm_idx)
+                )
+                .set_damping_ratio(Settings.impedance_damping_ratio)
+                .set_torque_limit(
+                    [Settings.impedance_torque_limit] * len(ROBOT.model.left_arm_idx)
+                )
+            )
+
+        ROBOT.stream.send_command(
+            rby.RobotCommandBuilder().set_command(
+                rby.ComponentBasedCommandBuilder().set_body_command(
+                    rby.BodyComponentBasedCommandBuilder()
+                    .set_torso_command(torso_builder)
+                    .set_right_arm_command(right_builder)
+                    .set_left_arm_command(left_builder)
+                )
+            )
+        )
 
         def loop(state: rby.upc.MasterArm.State):
             # latch
@@ -123,6 +250,89 @@ class TeleopManager:
 
             # build robot command
             rc = rby.BodyComponentBasedCommandBuilder()
+
+            if (
+                State.quest_udp_running
+            ):  # TODO 실제로 데이터가 들어오고 있는지 확인이 필요합니다.
+                quest_head_pose = State.quest_head_pose
+                if quest_head_ref_pose is None:
+                    quest_head_ref_pose = quest_head_pose
+
+                if state.button_right.button and state.button_left.button:
+                    last_torso_pose = (
+                        torso_ref_pose
+                        @ np.linalg.inv(quest_head_ref_pose)
+                        @ quest_head_pose
+                    )
+
+                    self.torso_minimum_time = max(
+                        self.torso_minimum_time - Settings.master_arm_loop_period,
+                        Settings.master_arm_loop_period * 1.01,
+                    )
+
+                    if self.position_mode:
+                        torso_builder = (
+                            rby.CartesianCommandBuilder()
+                            .set_command_header(
+                                rby.CommandHeaderBuilder().set_control_hold_time(
+                                    control_hold_time
+                                )
+                            )
+                            .set_stop_joint_position_tracking_error(0)
+                            .set_stop_orientation_tracking_error(0)
+                            .set_stop_joint_position_tracking_error(0)
+                            .add_target(
+                                "base",
+                                "link_torso_5",
+                                last_torso_pose,
+                                self.LINEAR_VECLOITY_LIMIT,  # TODO 튜닝 필요합니다.
+                                self.ANGULAR_VELOCITY_LIMIT,  # TODO 튜닝 필요합니다.
+                                self.ACCELERATION_LIMIT_SCALING,  # TODO 튜닝 필요합니다.
+                            )
+                            .set_minimum_time(self.torso_minimum_time)
+                        )
+                    else:
+                        torso_builder = (
+                            rby.CartesianImpedanceControlCommandBuilder()
+                            .set_command_header(
+                                rby.CommandHeaderBuilder().set_control_hold_time(
+                                    control_hold_time
+                                )
+                            )
+                            .set_joint_stiffness(
+                                [Settings.torso_impedance_stiffness]
+                                * len(ROBOT.model.torso_idx)
+                            )
+                            .set_joint_torque_limit(
+                                [Settings.torso_impedance_torque_limit]
+                                * len(ROBOT.model.torso_idx)
+                            )
+                            .add_joint_limit("torso_1", -0.523598776, 1.3)
+                            .add_joint_limit("torso_2", -2.617993878, -0.2)
+                            .set_stop_joint_position_tracking_error(0)
+                            .set_stop_orientation_tracking_error(0)
+                            .set_stop_joint_position_tracking_error(0)
+                            .add_target(
+                                "base",
+                                "link_torso_5",
+                                last_torso_pose,
+                                self.LINEAR_VECLOITY_LIMIT,  # TODO 튜닝 필요합니다.
+                                self.ANGULAR_VELOCITY_LIMIT,  # TODO 튜닝 필요합니다.
+                                self.DEFAULT_LINEAR_ACCELERATION
+                                * self.ACCELERATION_LIMIT_SCALING,  # TODO 튜닝 필요합니다.
+                                self.DEFAULT_ANGULAR_ACCELERATION
+                                * self.ACCELERATION_LIMIT_SCALING,  # TODO 튜닝 필요합니다.
+                            )
+                            .set_minimum_time(self.torso_minimum_time)
+                        )
+                    rc.set_torso_command(torso_builder)
+
+                else:
+                    torso_ref_pose = torso_last_pose
+                    self.torso_minimum_time = 0.8
+            else:
+                quest_head_ref_pose = None
+                self.torso_minimum_time = 1.0
 
             if state.button_right.button and not is_collision:
                 self.right_minimum_time = max(

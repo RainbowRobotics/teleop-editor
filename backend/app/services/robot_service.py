@@ -1,3 +1,8 @@
+"""
+LEGACY
+TODO robot/robot.py 와 정리할 것
+"""
+
 import logging
 from app.state import State
 

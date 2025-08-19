@@ -257,7 +257,7 @@ onMounted(async () => {
 
   // Renderer
   renderer = new THREE.WebGLRenderer({
-    antialias: false,
+    antialias: true,
     powerPreference: 'high-performance',
     precision: 'highp',
   })
