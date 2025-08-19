@@ -50,6 +50,16 @@ import { useProjectStore } from '@/stores/project'
 // 선택 상태를 읽어서 Inspector 노출 제어
 const project = useProjectStore()
 const { selectedClip } = storeToRefs(project)
+
+
+import { onMounted } from 'vue'
+
+onMounted(() => {
+  const dataURL = window.location.hostname
+  const dataPort = 8001
+  project.backendUrl = `http://${dataURL}:${dataPort}`;
+})
+
 </script>
 
 <style scoped>
