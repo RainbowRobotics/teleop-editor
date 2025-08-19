@@ -5,7 +5,7 @@ export type SourceNoId = {
   jointNames: string[]
   dt: number
   frames: number[][]
-  name: string // 기본: 파일명(확장자 제거), UI에서 변경 가능
+  name: string
 }
 
 export function importCsv(

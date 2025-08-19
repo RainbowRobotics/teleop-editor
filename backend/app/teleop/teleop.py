@@ -12,6 +12,7 @@ from app.robot.common import Settings
 class TeleopManager:
 
     QUEST_LPF = 0.98
+    MASTER_ARM_TORQUE_GAIN = 0.5
 
     # LIMITS
     LINEAR_VECLOITY_LIMIT = 4.0  # m/s
@@ -193,8 +194,6 @@ class TeleopManager:
         )
 
         def loop(state: rby.upc.MasterArm.State):
-            global head_position, head_quat
-
             # latch
             if self.right_q is None:
                 self.right_q = state.q_joint[0:7]
@@ -235,7 +234,7 @@ class TeleopManager:
             if state.button_right.button == 1:
                 mode_r = rby.DynamixelBus.CurrentControlMode
                 self.right_q = state.q_joint[0:7]
-                tgt_torque_r = torque[0:7]
+                tgt_torque_r = torque[0:7] * self.MASTER_ARM_TORQUE_GAIN
                 tgt_pos_r = None
             else:
                 mode_r = rby.DynamixelBus.CurrentBasedPositionControlMode
@@ -245,7 +244,7 @@ class TeleopManager:
             if state.button_left.button == 1:
                 mode_l = rby.DynamixelBus.CurrentControlMode
                 self.left_q = state.q_joint[7:14]
-                tgt_torque_l = torque[7:14]
+                tgt_torque_l = torque[7:14] * self.MASTER_ARM_TORQUE_GAIN
                 tgt_pos_l = None
             else:
                 mode_l = rby.DynamixelBus.CurrentBasedPositionControlMode
@@ -485,6 +484,7 @@ class TeleopManager:
             return cin
 
         MASTER.start_control(loop)
+        ROBOT.teleop_active = True
         self.running = True
 
     def stop(self):
@@ -494,6 +494,7 @@ class TeleopManager:
             MASTER.stop_control()
             ROBOT.stream.cancel()
         finally:
+            ROBOT.teleop_active = False
             self.running = False
 
     def state(self) -> Dict[str, Any]:

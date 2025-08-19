@@ -1,4 +1,3 @@
-<!-- components/TransportBar.vue -->
 <template>
   <div class="transport">
     <button class="btn" @click="store.stop()" title="Stop" aria-label="Stop">
@@ -25,13 +24,17 @@
       </svg>
     </button>
 
-    <div class="time">{{ (store.player.t_ms / 1000).toFixed(2) }}s</div>
+    <div class="time">{{ (marker / 1000).toFixed(2) }}s</div>
   </div>
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useProjectStore } from '@/stores/project'
 const store = useProjectStore()
+
+// Smooth, drift-corrected marker
+const marker = computed(() => store.uiMarkerMs ?? store.player.t_ms)
 
 /** 전체 타임라인 길이(ms) 추정 (lengthMs 있으면 그걸 우선) */
 function getDurationMs(): number {
@@ -56,7 +59,6 @@ function getDefaultStepMs(): number {
 }
 
 async function exportCsv() {
-  // 필요한 구간/샘플링 설정
   const t0_ms = 0
   const t1_ms = getDurationMs()
   const step_ms = getDefaultStepMs()
@@ -74,7 +76,6 @@ async function exportCsv() {
     throw new Error(`Export failed: ${msg}`)
   }
 
-  // 다운로드
   const blob = await res.blob()
   const a = document.createElement('a')
   a.href = URL.createObjectURL(blob)

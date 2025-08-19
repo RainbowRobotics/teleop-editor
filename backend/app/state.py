@@ -10,6 +10,7 @@ from app.motion.evaluator import TrajectoryEvaluator, Limits
 from app.motion.types import DOF, Project as RTProject
 from app.motion.adapter import to_runtime, from_runtime
 from app.models import Project as PydProject
+from app.robot.robot import ROBOT
 
 DEFAULT_V_MAX = [10.0] * DOF
 DEFAULT_A_MAX = [50.0] * DOF
@@ -35,6 +36,8 @@ class RuntimeState:
         lim = Limits(v_max=DEFAULT_V_MAX, a_max=DEFAULT_A_MAX, j_max=DEFAULT_J_MAX)
         self._evaluator = TrajectoryEvaluator(limits=lim)
         self._rt_project: Optional[RTProject] = None
+
+        ROBOT.set_play_evaluator(self._evaluator.eval_range, self._evaluator.eval_at)
 
     @property
     def quest_state_json(self) -> str:

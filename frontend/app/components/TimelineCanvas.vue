@@ -1,4 +1,3 @@
-<!-- components/TimelineCanvas.vue -->
 <template>
   <div ref="timelineContainer" class="panel timeline-panel">
     <div class="panel-title timeline-title">
@@ -21,8 +20,8 @@
       </div>
     </div>
 
-    <v-stage :config="{ width: Math.max(1, stageWidth), height: totalTimelineHeight }" @wheel="onWheel"
-      @mousedown="onMouseDown" @mousemove="onMouseMove">
+    <v-stage :config="{ width: Math.max(1, stageWidth), height: totalTimelineHeight }"
+             @wheel="onWheel" @mousedown="onMouseDown" @mousemove="onMouseMove">
       <v-layer :key="'base-' + sparksVersion">
         <!-- 배경 -->
         <v-rect :config="{ x: 0, y: 0, width: stageWidth, height: totalTimelineHeight }" />
@@ -31,8 +30,7 @@
         <template v-for="t in ticks" :key="'grid-x-' + t.x">
           <v-line :config="{
             points: [t.x + timelineOffsetPx, 0, t.x + timelineOffsetPx, totalTimelineHeight],
-            stroke: '#2a3242',
-            strokeWidth: 1
+            stroke: '#2a3242', strokeWidth: 1
           }" />
         </template>
 
@@ -40,8 +38,7 @@
         <template v-for="gy in gridRows" :key="'grid-y-' + gy">
           <v-line :config="{
             points: [0, gy, stageWidth, gy],
-            stroke: '#253044',
-            strokeWidth: 1
+            stroke: '#253044', strokeWidth: 1
           }" />
         </template>
 
@@ -52,15 +49,11 @@
         <template v-for="t in ticks" :key="'tick-' + t.x">
           <v-line :config="{
             points: [t.x + timelineOffsetPx, timelineY - 5, t.x + timelineOffsetPx, timelineY + 25],
-            stroke: '#9aa3af',
-            strokeWidth: 1
+            stroke: '#9aa3af', strokeWidth: 1
           }" />
           <v-text :config="{
-            x: t.x + timelineOffsetPx + 2,
-            y: timelineY + 28,
-            text: t.label,
-            fontSize: 10,
-            fill: '#c8d0dc'
+            x: t.x + timelineOffsetPx + 2, y: timelineY + 28, text: t.label,
+            fontSize: 10, fill: '#c8d0dc'
           }" />
         </template>
 
@@ -87,8 +80,7 @@
             x: clipX(clip) + timelineOffsetPx + 4,
             y: timelineY + 52 + clip.track * rowH,
             text: sources[clip.sourceId]?.name || clip.id,
-            fontSize: 12,
-            fill: '#0f1115'
+            fontSize: 12, fill: '#0f1115'
           }" />
         </template>
 
@@ -96,34 +88,25 @@
         <template v-for="clip in viewClips" :key="'spark-'+clip.id+'-'+sparksVersion">
           <v-line :config="{
             points: sparkPointsForClip(clip),
-            stroke: 'rgba(255,255,255,.7)',
-            strokeWidth: 1,
-            lineCap: 'round',
-            lineJoin: 'round',
-            listening: false
+            stroke: 'rgba(255,255,255,.7)', strokeWidth: 1,
+            lineCap: 'round', lineJoin: 'round', listening: false
           }" />
         </template>
 
         <!-- 스냅 가이드 -->
         <v-line v-if="snapGuideXPx !== null" :config="{
           points: [snapGuideXPx, 0, snapGuideXPx, totalTimelineHeight],
-          stroke: '#ffd166',
-          strokeWidth: 1,
-          dash: [4, 4]
+          stroke: '#ffd166', strokeWidth: 1, dash: [4, 4]
         }" />
 
-        <!-- 마커 -->
+        <!-- 마커 (글로벌 동기화) -->
         <v-line :config="{
           points: [markerXPx + timelineOffsetPx, 0, markerXPx + timelineOffsetPx, totalTimelineHeight],
-          stroke: '#ff4040',
-          strokeWidth: 2
+          stroke: '#ff4040', strokeWidth: 2
         }" />
         <v-text :config="{
-          x: markerXPx + timelineOffsetPx + 6,
-          y: 6,
-          text: markerLabel,
-          fontSize: 12,
-          fill: '#ff8888'
+          x: markerXPx + timelineOffsetPx + 6, y: 6,
+          text: markerLabel, fontSize: 12, fill: '#ff8888'
         }" />
       </v-layer>
     </v-stage>
@@ -165,7 +148,7 @@ const { clips, sources, lengthMs } = storeToRefs(project)
 const isRms = computed(() => project.graphJointMode === 'rms')
 
 /* ---------- Motion WS ---------- */
-let motion = null as MotionClient | null
+let motion: MotionClient | null = null
 
 /* ---------- 스케일/오프셋 ---------- */
 const zoom = ref(0.1)               // px per ms
@@ -177,19 +160,30 @@ const contentMs = computed(() => {
   for (const c of clips.value) {
     const s = sources.value[c.sourceId]
     if (!s) continue
-    const dur = Math.round((c.outFrame - c.inFrame) * s.dt * 1000 + c.t0)
+    const dur = Math.round((c.outFrame - c.inFrame) * s.dt * 1000)
     maxEnd = Math.max(maxEnd, c.t0 + dur)
   }
   return maxEnd
 })
 const contentWidthPx = computed(() => contentMs.value * zoom.value)
 
-/* ---------- 마커 ---------- */
-const markerXPx = ref(100)
+/* ---------- 마커(글로벌 동기화) ---------- */
+const markerXPx = ref(0)
+// store의 drift 보정된 마커 사용; 없으면 player.t_ms
+const externalMs = computed(() => (project as any).uiMarkerMs ?? project.player.t_ms)
 const markerMs = computed(() => Math.max(0, markerXPx.value / zoom.value))
 const markerLabel = computed(() =>
   markerMs.value >= 1000 ? `${(markerMs.value / 1000).toFixed(2)} s` : `${Math.round(markerMs.value)} ms`
 )
+// 재생 중에는 store 마커를 추종(드래그 중 제외)
+watch(externalMs, (ms) => {
+  if (isMarkerDragging.value) return
+  const px = msToPx(ms)
+  if (Math.abs(px - markerXPx.value) > 0.5) {
+    markerXPx.value = px
+    ensureMarkerVisible(px)
+  }
+})
 
 /* ---------- 마우스 상태 ---------- */
 const isMarkerDragging = ref(false)
@@ -243,7 +237,7 @@ watch(markerMs, (ms) => pushSeek(ms))
 
 /* ---------- 스냅 ---------- */
 const snapGuideXPx = ref<number | null>(null)
-const snap = reactive({ enabled: true, to: 'both' as 'grid' | 'clips' | 'both', thresholdPx: 8 })
+const snap = reactive({ enabled: false, to: 'both' as 'grid' | 'clips' | 'both', thresholdPx: 8 })
 function currentGridStepMs() { return niceStep(pxPerMs.value) }
 function applySnapMs(candidateMs: number, excludeClipId?: string) {
   if (!snap.enabled) return { ms: candidateMs, guidePx: null }
@@ -307,15 +301,21 @@ function clampOffset() {
   if (timelineOffsetPx.value < min) timelineOffsetPx.value = min
 }
 
+/** 마커 가시화 유지 */
+function ensureMarkerVisible(markerPx: number, marginPx = 40) {
+  const left = -timelineOffsetPx.value
+  const right = left + stageWidth.value
+  if (markerPx < left + marginPx) {
+    timelineOffsetPx.value = -(markerPx - marginPx)
+    clampOffset(); genTicks(); requestSparksRedraw()
+  } else if (markerPx > right - marginPx) {
+    timelineOffsetPx.value = -(markerPx - (right - marginPx))
+    clampOffset(); genTicks(); requestSparksRedraw()
+  }
+}
+
 /* ---------- 이벤트 ---------- */
 function onWheel(e: any) {
-  // if (e.evt.shiftKey) {
-  //   e.evt.preventDefault()
-  //   const delta = e.evt.deltaX || 0
-  //   timelineContainer.value?.scrollBy({ top: delta, behavior: 'auto' })
-  //   return
-  // }
-
   if (e.evt.shiftKey) {
     e.evt.preventDefault()
     const scaleBy = 1.1
@@ -330,9 +330,7 @@ function onWheel(e: any) {
     zoom.value = Math.min(2.0, Math.max(0.02, zoom.value))
 
     timelineOffsetPx.value = mouseX - worldXBefore * zoom.value
-    clampOffset()
-    genTicks()
-    requestSparksRedraw()
+    clampOffset(); genTicks(); requestSparksRedraw()
   }
 }
 
@@ -383,10 +381,8 @@ function onMouseMove(e: any) {
   if (!pos) return
 
   if (activeClipId.value) {
-    const vc = viewClips.value.find(v => v.id === activeClipId.value)
-    if (!vc) return
-    const src = sources.value[vc.sourceId]
-    if (!src) return
+    const vc = viewClips.value.find(v => v.id === activeClipId.value); if (!vc) return
+    const src = sources.value[vc.sourceId]; if (!src) return
 
     const dxPx = pos.x - clipDragStartX
     const dxMs = Math.round(pxToMs(dxPx))
@@ -419,26 +415,40 @@ function onMouseMove(e: any) {
     const { ms, guidePx } = applySnapMs(rawMs)
     markerXPx.value = msToPx(ms)
     snapGuideXPx.value = guidePx
+    // 일시정지 중이면 로컬 마커도 갱신 (다른 컴포넌트와 동기)
+    if (!project.player.playing) {
+      (project as any).setLocalMarker?.(Math.round(ms)) ?? (project.player.t_ms = Math.round(ms))
+    }
     return
   }
   if (isTimelineDragging.value) {
     const dx = pos.x - lastPointerX
     timelineOffsetPx.value += dx
     lastPointerX = pos.x
-    clampOffset()
-    genTicks()
-    requestSparksRedraw()
+    clampOffset(); genTicks(); requestSparksRedraw()
     return
   }
 }
 
 function onMouseUp() {
+  const wasDraggingMarker = isMarkerDragging.value
   isMarkerDragging.value = false
   isTimelineDragging.value = false
   activeClipId.value = null
   clipDragMode.value = 'none'
   viewClips.value.forEach(v => (v.dragging = false))
   snapGuideXPx.value = null
+
+  // 스크럽 커밋 → 전역 마커 반영
+  if (wasDraggingMarker) {
+    const ms = Math.max(0, Math.round(markerMs.value))
+    if (project.player.playing) {
+      project.play(ms).catch((e: any) => console.warn('play(seek) failed:', e))
+    } else {
+      (project as any).setLocalMarker?.(ms) ?? (project.player.t_ms = ms)
+      project.seek(ms)
+    }
+  }
 }
 
 let lastCursor = ''
@@ -446,7 +456,7 @@ function setCursor(container: HTMLElement, v: string) {
   if (lastCursor !== v) { container.style.cursor = v; lastCursor = v }
 }
 
-/* ---------- 초기화 & 예시 ---------- */
+/* ---------- 초기화 ---------- */
 onMounted(async () => {
   await nextTick()
 
@@ -464,24 +474,9 @@ onMounted(async () => {
   contRO = new ResizeObserver(() => measureStageWidth())
   if (timelineContainer.value) contRO.observe(timelineContainer.value)
 
-  window.addEventListener('keydown', (e) => { if (e.altKey) snap.enabled = false })
-  window.addEventListener('keyup', (e) => { if (!e.altKey) snap.enabled = true })
+  window.addEventListener('keydown', (e) => { if (e.altKey) snap.enabled = true })
+  window.addEventListener('keyup', (e) => { if (e.altKey) snap.enabled = false })
   window.addEventListener('mouseup', onMouseUp)
-
-  // 예시 소스
-  function makeRandomFrames(n: number, dof: number) {
-    return Array.from({ length: n }, (_, i) =>
-      Array.from({ length: dof }, (_, j) =>
-        Math.sin(i / 10 + j * 0.17) * 0.5 + Math.cos(i / 18 + j * 0.11) * 0.3
-      )
-    )
-  }
-  if (Object.keys(project.sources).length === 0) {
-    const src1: Omit<Source, 'id'> = { name: 'Motion A', dt: 0.033, frames: makeRandomFrames(90, DOF) }
-    const src2: Omit<Source, 'id'> = { name: 'Motion B', dt: 0.033, frames: makeRandomFrames(60, DOF) }
-    const src3: Omit<Source, 'id'> = { name: 'Motion C', dt: 0.033, frames: makeRandomFrames(500, DOF) }
-    project.addSource(src1); project.addSource(src2); project.addSource(src3)
-  }
 
   refreshViewClips()
   clampOffset()
@@ -490,8 +485,13 @@ onMounted(async () => {
 
   motion.onOpen(() => {
     motion?.setProject(project.toSnapshot())
-    motion?.seek(Math.round(markerMs.value))
+    // WS 초기 seek: 현재 전역 마커 위치
+    const t = (project as any).uiMarkerMs ?? project.player.t_ms
+    motion?.seek(Math.round(t))
   })
+
+  // 백엔드 플레이 상태 폴링 시작 (드리프트 보정에 필요)
+  ;(project as any)._ensurePlayPolling?.()
 })
 
 onBeforeUnmount(() => {
@@ -562,7 +562,7 @@ function getSpark(sourceId: string): Float32Array {
   return sig
 }
 
-function sparkPointsForClip(clip: ViewClip): number[] {
+function sparkPointsForClip(clip: any): number[] {
   const s = sources.value[clip.sourceId]; if (!s) return []
   const sig = getSpark(clip.sourceId)  // [SPARK_SAMPLES]
   const framesTotal = s.frames.length

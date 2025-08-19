@@ -16,7 +16,7 @@ class Settings:
 
 @dataclass
 class Pose:
-    toros: np.ndarray
+    torso: np.ndarray
     right_arm: np.ndarray
     left_arm: np.ndarray
 
@@ -24,7 +24,7 @@ class Pose:
 # Model is fixed as "A", but keeping map for clarity
 READY_POSE = {
     "A": Pose(
-        toros=np.deg2rad([0.0, 45.0, -90.0, 45.0, 0.0, 0.0]),
+        torso=np.deg2rad([0.0, 45.0, -90.0, 45.0, 0.0, 0.0]),
         right_arm=np.deg2rad([0.0, -5.0, 0.0, -120.0, 0.0, 70.0, 0.0]),
         left_arm=np.deg2rad([0.0, 5.0, 0.0, -120.0, 0.0, 70.0, 0.0]),
     )

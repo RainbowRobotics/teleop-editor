@@ -8,14 +8,16 @@ export type Source = { id: string; dt: number; frames: number[][]; name?: string
 export type Blend = { mode: BlendMode; inMs: number; outMs: number; curve: BlendCurve; weight: number; priority: number }
 export type Clip = { id: string; sourceId: string; t0: number; inFrame: number; outFrame: number; name?: string; blend: Blend }
 
+export type PlayerState = { t_ms: number; playing: boolean }
+
 function makeId(p: string) { return `${p}_${Math.random().toString(36).slice(2, 9)}` }
 
 export type ProjectSnapshot = {
   lengthMs: number
   sources: Record<string, Source>
   clips: Clip[]
-  player: { playing: boolean; t_ms: number; rate: number }
-  jointNames: string[]                      // ★ project-level joint names (24 DOF)
+  player: PlayerState
+  jointNames: string[]
   endpoints?: {
     robotAddress?: string
     questAddress?: string
@@ -27,7 +29,7 @@ export type ProjectState = {
   lengthMs: number
   sources: Record<string, Source>
   clips: Clip[]
-  player: { playing: boolean; t_ms: number; rate: number }
+  player: PlayerState
   jointNames: string[]
 
   blendDefaults: Blend
@@ -62,6 +64,11 @@ export type ProjectState = {
   statusIntervalMs: number
   statusRunning: boolean
   statusInFlight: boolean
+
+  // Playback/state polling
+  _playPollTimer: number | null
+  _srv_marker_ms: number
+  _srv_poll_at_ms: number
 }
 
 export const useProjectStore = defineStore('project', {
@@ -70,7 +77,7 @@ export const useProjectStore = defineStore('project', {
     lengthMs: 0,
     sources: {},
     clips: [],
-    player: { playing: false, t_ms: 0, rate: 1.0 },
+    player: { playing: false, t_ms: 0 },
     jointNames: [
       "gripper_finger_r1", "gripper_finger_l1", "torso_0", "torso_1", "torso_2", "torso_3",
       "torso_4", "torso_5", "right_arm_0", "right_arm_1", "right_arm_2", "right_arm_3",
@@ -78,7 +85,7 @@ export const useProjectStore = defineStore('project', {
       "left_arm_3", "left_arm_4", "left_arm_5", "left_arm_6", "head_0", "head_1"
     ],
 
-    // ★ as-cast 불필요: 정확한 리터럴 값이라 Blend로 추론됨
+    // ★ 정확한 리터럴 값이라 Blend로 추론됨
     blendDefaults: { mode: 'override', inMs: 120, outMs: 120, curve: 'easeInOut', weight: 1.0, priority: 0 },
 
     // 연결 관련
@@ -112,12 +119,29 @@ export const useProjectStore = defineStore('project', {
     statusIntervalMs: 1000,
     statusRunning: false,
     statusInFlight: false,
+
+    _playPollTimer: null,
+    _srv_marker_ms: 0,
+    _srv_poll_at_ms: 0,
   }),
 
   getters: {
-    // ★ state 타입 명시로 "Parameter 'state' implicitly has an 'any' type" 방지
+    // 선택된 클립
     selectedClip: (state: ProjectState): Clip | null =>
       state.clips.find(c => c.id === state.selectedClipId) ?? null,
+
+    /** 매끄러운 전역 마커(ms)
+     * - 재생 중: 백엔드 마커 + (지연시간 보정)
+     * - 일시정지: 로컬 마커
+     */
+    uiMarkerMs(state: ProjectState): number {
+      const now = (typeof performance !== 'undefined') ? performance.now() : Date.now()
+      if (state.player.playing) {
+        const elapsed = Math.max(0, now - state._srv_poll_at_ms)
+        return Math.max(0, Math.round(state._srv_marker_ms + elapsed))
+      }
+      return Math.max(0, Math.round(state.player.t_ms))
+    },
   },
 
   actions: {
@@ -188,7 +212,7 @@ export const useProjectStore = defineStore('project', {
       this.lengthMs = p.lengthMs ?? 0
       this.sources = p.sources ?? {}
       this.clips = p.clips ?? []
-      this.player = p.player ?? { playing: false, t_ms: 0, rate: 1.0 }
+      this.player = p.player ?? { t_ms: 0, playing: false }
       // ★ jointNames 반영 누락 보정
       if (Array.isArray(p.jointNames) && p.jointNames.length > 0) {
         this.jointNames = p.jointNames
@@ -273,10 +297,6 @@ export const useProjectStore = defineStore('project', {
       }
       this.questConnected = false;
     },
-
-    play() { this.player.playing = true },
-    stop() { this.player.playing = false; this.player.t_ms = 0 },
-    pause() { this.player.playing = false },
 
     /* ---------- Quest 연결 상태 관리 ---------- */
     ensureQuestWS() {
@@ -522,7 +542,7 @@ export const useProjectStore = defineStore('project', {
         this.statusInFlight = false
       }
     },
-  
+
     // Start polling (fires once immediately)
     startStatusPolling(intervalMs?: number) {
       if (this.statusTimer) return   // already running
@@ -532,7 +552,7 @@ export const useProjectStore = defineStore('project', {
       void this.statusTick()
       this.statusTimer = window.setInterval(() => this.statusTick(), this.statusIntervalMs)
     },
-  
+
     // Stop polling
     stopStatusPolling() {
       this.statusRunning = false
@@ -540,6 +560,92 @@ export const useProjectStore = defineStore('project', {
         clearInterval(this.statusTimer)
         this.statusTimer = null
       }
+    },
+
+    /* ---------- Playback sync ---------- */
+    setLocalMarker(ms: number) {
+      this.player.t_ms = Math.max(0, Math.round(ms))
+    },
+
+    _ensurePlayPolling(intervalMs = 200) {
+      if (this._playPollTimer) return
+      const tick = async () => {
+        try {
+          const r = await fetch(`${this.backendUrl}/play/state`, { cache: 'no-store' })
+          if (!r.ok) return
+          const s = await r.json()
+          this.player.playing = !!s.playing
+          this._srv_marker_ms = Number(s.marker_ms || 0)
+          this._srv_poll_at_ms = (typeof performance !== 'undefined') ? performance.now() : Date.now()
+          // 일시정지/정지 상태에서는 백엔드 위치를 로컬로 채택
+          if (!this.player.playing) this.player.t_ms = this._srv_marker_ms
+        } catch { }
+      }
+      this._playPollTimer = window.setInterval(tick, intervalMs)
+      tick()
+    },
+
+    _stopPlayPolling() {
+      if (this._playPollTimer) {
+        clearInterval(this._playPollTimer)
+        this._playPollTimer = null
+      }
+    },
+
+    async seek(ms: number) {
+      const marker_ms = Math.max(0, Math.round(ms))
+      await fetch(`${this.backendUrl}/play/seek`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ marker_ms })
+      }).catch(() => {/* ignore network hiccup */ })
+      // mirror locally
+      this.player.t_ms = marker_ms
+      this.player.playing = false
+    },
+
+    async play(t0_ms?: number) {
+      const nowMarker = this.uiMarkerMs // getter 사용: 재생 중엔 서버 기준
+      const t = typeof t0_ms === 'number' ? t0_ms : nowMarker || 0
+      const res = await fetch(`${this.backendUrl}/play/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ t0_ms: t })
+      })
+      if (!res.ok) {
+        const msg = await res.json().catch(() => ({} as any))
+        throw new Error(msg?.detail || `Play start failed (${res.status})`)
+      }
+      // 재생 시작: 서버 권위로 스냅
+      this.player.playing = true
+      this._srv_marker_ms = t
+      this._srv_poll_at_ms = (typeof performance !== 'undefined') ? performance.now() : Date.now()
+      this._ensurePlayPolling()
+    },
+
+    async pause() {
+      await fetch(`${this.backendUrl}/play/stop`, { method: 'POST' })
+      // 서버의 마지막 마커를 취해 로컬로 정착
+      try {
+        const r = await fetch(`${this.backendUrl}/play/state`, { cache: 'no-store' })
+        if (r.ok) {
+          const s = await r.json()
+          this.player.playing = false
+          this.player.t_ms = Number(s.marker_ms || 0)
+        } else {
+          this.player.playing = false
+        }
+      } catch {
+        this.player.playing = false
+      }
+    },
+
+    async stop() {
+      await fetch(`${this.backendUrl}/play/stop`, { method: 'POST' })
+      this.player.playing = false
+      this.player.t_ms = 0
+
+      await this.seek(0)
     },
   }
 })
