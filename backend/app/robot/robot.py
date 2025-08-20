@@ -5,6 +5,7 @@ from typing import Optional, Dict, Any, Union, Tuple, Callable, List
 
 import numpy as np
 import rby1_sdk as rby
+from app.robot.gripper import GRIPPER
 
 from .common import Settings, READY_POSE
 
@@ -120,6 +121,7 @@ class RobotManager:
 
             # recording tap
             try:
+                gripper_q = GRIPPER.get_target_normalized_vec()
                 if self.robot_q is not None:
                     with self._rec_lock:
                         if (
@@ -128,9 +130,9 @@ class RobotManager:
                         ):
                             # Use loop period for time axis (seconds)
                             t = Settings.master_arm_loop_period * len(self._rec_samples)
-                            self._rec_samples.append(
-                                [float(t), *map(float, self.robot_q)]
-                            )
+                            q = self.robot_q.copy()
+                            q[0:1] = gripper_q if gripper_q else [0.0, 0.0]
+                            self._rec_samples.append([float(t), *map(float, q)])
             except Exception:
                 pass
 
@@ -537,6 +539,9 @@ class RobotManager:
             # Pre-roll: single position command with minimum_time=2.0s
             cmd = self._build_position_command_from_q(q_start, min_time_s=2.0)
             fb = self.robot.send_command(cmd).get()
+            if GRIPPER.connected:
+                gripper_q = np.clip(q_start[0:2], [0.0, 0.0], [1.0, 1.0])
+                GRIPPER.set_target_normalized_vec(gripper_q)
             if fb.finish_code != rby.RobotCommandFeedback.FinishCode.Ok:
                 return False
         except Exception:
@@ -557,7 +562,7 @@ class RobotManager:
             with self._play_lock:
                 if self.playing:
                     return False
-                
+
                 self._play_marker_ms = max(0.0, float(marker_ms))
             return True
         except Exception:
@@ -630,6 +635,11 @@ class RobotManager:
                             q, min_time_s=period_s * 1.01
                         )
                         self.stream.send_command(cmd)
+                        
+                        # Gripper
+                        if GRIPPER.connected:
+                            gripper_q = np.clip(q[0:2], [0.0, 0.0], [1.0, 1.0])
+                            GRIPPER.set_target_normalized_vec(gripper_q)
                     except Exception:
                         self._play_stop.set()
                         break

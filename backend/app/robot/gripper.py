@@ -187,10 +187,10 @@ class Gripper:
             tgt = self.min_q + (arr if self.GRIPPER_DIRECTION else (1.0 - arr)) * span
             self.target_q = tgt
 
-    # ---- state ----
-    def state(self) -> Dict[str, Any]:
+    # --- target_n ---
+    def get_target_normalized_vec(self) -> Optional[List[float]]:
+        target_n = None
         with self._lock:
-            target_n = None
             if (
                 self.target_q is not None
                 and np.isfinite(self.min_q).all()
@@ -205,6 +205,12 @@ class Gripper:
                     .astype(float)
                     .tolist()
                 )
+        return target_n
+
+    # ---- state ----
+    def state(self) -> Dict[str, Any]:
+        target_n = self.get_target_normalized_vec()
+        with self._lock:
             return {
                 "connected": self.connected,
                 "homed": self.homed,
