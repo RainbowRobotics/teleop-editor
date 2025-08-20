@@ -69,6 +69,8 @@ export type ProjectState = {
   _playPollTimer: number | null
   _srv_marker_ms: number
   _srv_poll_at_ms: number
+
+  _undo: any[]
 }
 
 export const useProjectStore = defineStore('project', {
@@ -123,6 +125,8 @@ export const useProjectStore = defineStore('project', {
     _playPollTimer: null,
     _srv_marker_ms: 0,
     _srv_poll_at_ms: 0,
+
+    _undo: [],
   }),
 
   getters: {
@@ -158,6 +162,18 @@ export const useProjectStore = defineStore('project', {
       const id = src.id ?? makeId('src')
       this.sources[id] = { ...src, id }
       return id
+    },
+
+    /* ---------- 내부 유틸 ---------- */
+    _recalcLengthMs() {
+      let maxEnd = 0
+      for (const c of this.clips) {
+        const s = this.sources[c.sourceId]
+        if (!s) continue
+        const dur = Math.round((c.outFrame - c.inFrame) * s.dt * 1000)
+        maxEnd = Math.max(maxEnd, c.t0 + dur)
+      }
+      this.lengthMs = maxEnd
     },
 
     addClip(c: Omit<Clip, 'id'> & { id?: string }) {
@@ -559,6 +575,36 @@ export const useProjectStore = defineStore('project', {
       if (this.statusTimer) {
         clearInterval(this.statusTimer)
         this.statusTimer = null
+      }
+    },
+
+    /* ---------- 삭제/Undo ---------- */
+    removeClip(id: string) {
+      const i = this.clips.findIndex(c => c.id === id)
+      if (i < 0) return
+      this.clips.splice(i, 1)
+      if (this.selectedClipId === id) this.selectedClipId = null
+      this._recalcLengthMs()
+    },
+
+    removeClipWithUndo(id: string) {
+      const i = this.clips.findIndex(c => c.id === id)
+      if (i < 0) return
+      const removed = this.clips[i]
+      this.clips.splice(i, 1)
+      if (this.selectedClipId === id) this.selectedClipId = null
+      this._undo.push({ type: 'restoreClip', clip: removed, index: i })
+      this._recalcLengthMs()
+      return removed
+    },
+
+    undo() {
+      const u = this._undo.pop()
+      if (!u) return
+      if (u.type === 'restoreClip') {
+        const { clip, index } = u
+        this.clips.splice(Math.max(0, Math.min(index, this.clips.length)), 0, clip)
+        this._recalcLengthMs()
       }
     },
 

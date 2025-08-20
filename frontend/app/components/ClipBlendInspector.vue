@@ -2,12 +2,6 @@
     <div class="inspector panel">
         <div class="panel-title">Blend</div>
 
-        <transition name="toast">
-            <div v-if="saved" class="toast ok">
-                <span class="dot ok"></span> Saved
-            </div>
-        </transition>
-
         <header class="hdr">
             <div class="presets">
                 <button v-for="m in MODE_OPTIONS" :key="m" class="chip" :class="{ active: local.mode === m }"
@@ -77,11 +71,20 @@
             <button class="btn" @click="apply">Apply</button>
         </footer>
     </div>
+
+    <!-- Danger zone -->
+    <div class="danger">
+        <div class="dz-title">Danger zone</div>
+        <button class="btn danger" @click="deleteSelected" :disabled="!clip">Delete clip</button>
+    </div>
 </template>
 
 <script setup lang="ts">
-import { reactive, computed, watch, ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { reactive, computed, watch, ref, onMounted, onBeforeUnmount, nextTick, h } from 'vue'
 import { useProjectStore, type Blend, type BlendMode, type BlendCurve } from '@/stores/project'
+import { useNotification, NButton } from 'naive-ui'
+
+const notification = useNotification()
 
 const MODE_OPTIONS = ['override', 'crossfade', 'additive'] as const
 const CURVE_OPTIONS = ['linear', 'smoothstep', 'easeInOut'] as const
@@ -116,19 +119,40 @@ watch(clip, (c) => {
 
 watch(() => local.curve, queueDraw)
 
-const saved = ref(false)
-let savedTimer: number | undefined
 function apply() {
     if (!clip.value) return
     store.updateClipBlend(clip.value.id, { ...local })
-    saved.value = true
-    if (savedTimer) clearTimeout(savedTimer)
-    savedTimer = window.setTimeout(() => { saved.value = false }, 1500)
+
+    notification.create({
+        type: 'success',
+        title: '성공적으로 반영했습니다.',
+        duration: 1500
+    })
 }
 function reset() {
     if (!clip.value) return
     Object.assign(local, clip.value.blend)
     queueDraw()
+}
+
+function deleteSelected() {
+    const c = clip.value
+    if (!c) return
+    store.removeClipWithUndo?.(c.id) ?? store.removeClip?.(c.id)
+    store.setSelectedClip?.(null)
+
+    const n = notification.create({
+        type: 'warning',
+        title: `'${c.name || c.id}'' 클립을 삭제했습니다`,
+        content: '복구하시겠습니까?',
+        duration: 3500,
+        keepAliveOnHover: true,
+        action: () =>
+            h(NButton, {
+                text: true,
+                onClick: () => { store.undo?.(); n.destroy() }
+            }, { default: () => '복구하기' })
+    })
 }
 
 function queueDraw() {
@@ -202,7 +226,6 @@ onMounted(async () => {
 })
 onBeforeUnmount(() => {
     if (rafId !== undefined) cancelAnimationFrame(rafId)
-    if (savedTimer) clearTimeout(savedTimer)
     try { ro?.disconnect() } catch { }
 })
 </script>
@@ -385,47 +408,29 @@ select {
     border: 1px solid var(--line-2);
 }
 
-/* 토스트 */
-.toast {
-    position: absolute;
-    top: 10px;
-    right: 12px;
-    display: inline-flex;
+/* Danger zone */
+.danger {
+    /* margin-top: 12px; */
+    padding-top: 10px;
+    /* border-top: 1px dashed var(--line-2); */
+    display: flex;
     align-items: center;
     gap: 8px;
-    padding: 6px 10px;
-    border-radius: 999px;
-    background: rgba(79, 163, 255, .12);
-    border: 1px solid var(--line-2);
-    color: var(--text-0);
-    box-shadow: var(--shadow);
+}
+
+.dz-title {
     font-size: 12px;
-    z-index: 2;
+    color: var(--text-dim);
+    margin-right: auto;
 }
 
-.toast.ok {
-    background: rgba(72, 213, 151, .14);
-    border-color: color-mix(in oklab, var(--ok) 40%, var(--line-2));
+.btn.danger {
+    border-top: solid;
+    background: #ff6b6b;
+    color: #0f1115;
 }
 
-.toast .dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-}
-
-.toast .dot.ok {
-    background: var(--ok);
-}
-
-.toast-enter-active,
-.toast-leave-active {
-    transition: opacity .2s, transform .2s;
-}
-
-.toast-enter-from,
-.toast-leave-to {
-    opacity: 0;
-    transform: translateY(-6px);
+.btn.danger:hover {
+    filter: brightness(1.05);
 }
 </style>

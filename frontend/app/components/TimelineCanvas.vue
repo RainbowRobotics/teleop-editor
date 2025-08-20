@@ -1,5 +1,5 @@
 <template>
-  <div ref="timelineContainer" class="panel timeline-panel">
+  <div ref="timelineContainer" class="panel timeline-panel" tabindex="0">
     <div class="panel-title timeline-title">
       <span>Timeline</span>
 
@@ -21,7 +21,8 @@
     </div>
 
     <v-stage :config="{ width: Math.max(1, stageWidth), height: totalTimelineHeight }" @wheel="onWheel"
-      @mousedown="onMouseDown" @mousemove="onMouseMove" @dblclick="onDblClick" @dbltap="onDblClick">
+      @mousedown="onMouseDown" @mousemove="onMouseMove" @dblclick="onDblClick" @dbltap="onDblClick"
+      @contextmenu="onContextMenu">
       <v-layer :key="'base-' + sparksVersion">
         <!-- 배경 -->
         <v-rect :config="{ x: 0, y: 0, width: stageWidth, height: totalTimelineHeight }" />
@@ -112,17 +113,23 @@
     </v-stage>
   </div>
 
+  <!-- Naive UI: Context menu -->
+  <n-dropdown trigger="manual" :x="ctx.x" :y="ctx.y" :options="ctx.options" :show="ctx.show" @select="onCtxSelect"
+    @clickoutside="ctx.show = false" />
+
   <SourceCropDialog v-model:open="cropOpen" v-model:sourceId="cropSourceId" mode="edit"
-    :initial-in-frame="cropInitialInFrame" :initial-out-frame="cropInitialOutFrame" confirm-label="Update Clip"
-    @updated="onCropUpdated" @close="cropOpen = false" />
+    :initial-in-frame="cropInitialInFrame ?? undefined" :initial-out-frame="cropInitialOutFrame ?? undefined"
+    confirm-label="Update Clip" @updated="onCropUpdated" @close="cropOpen = false" />
+
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, reactive, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, reactive, watch, nextTick, h } from 'vue'
 import { useProjectStore, type Source } from '@/stores/project'
 import { storeToRefs } from 'pinia'
 import { MotionClient, throttle } from '@/lib/motionClient'
 import SourceCropDialog from '@/components/SourceCropDialog.vue'
+import { useNotification, NDropdown, NButton } from 'naive-ui'
 
 /* ---------- 레이아웃/상수 ---------- */
 const DOF = 24
@@ -209,6 +216,17 @@ const cropSourceId = ref<string | null>(null)
 const cropInitialInFrame = ref<number | null>(null)
 const cropInitialOutFrame = ref<number | null>(null)
 const cropTargetClipId = ref<string | null>(null)
+
+/* ---------- 컨텍스트 메뉴 & Undo 토스트 ---------- */
+const notification = useNotification()
+type CtxOption = { label: string; key: string }
+const ctx = reactive({
+  show: false,
+  x: 0,
+  y: 0,
+  targetClipId: null as string | null,
+  options: [{ label: '🗑 Delete', key: 'delete' }] as CtxOption[]
+})
 
 /* ---------- 좌표 변환 ---------- */
 const pxPerMs = computed(() => zoom.value)
@@ -328,7 +346,7 @@ function ensureMarkerVisible(markerPx: number, marginPx = 40) {
 
 /* ---------- 이벤트 ---------- */
 function onWheel(e: any) {
-  if (e.evt.shiftKey) {
+  if (e.evt.ctrlKey) {
     e.evt.preventDefault()
     const scaleBy = 1.1
     const oldZoom = zoom.value
@@ -337,9 +355,10 @@ function onWheel(e: any) {
     const mouseX = pos?.x ?? stageWidth.value / 2
     const worldXBefore = (mouseX - timelineOffsetPx.value) / oldZoom
 
+    const old_scale = zoom.value
     if (e.evt.deltaY < 0) zoom.value *= scaleBy
     else zoom.value /= scaleBy
-    zoom.value = Math.min(2.0, Math.max(0.02, zoom.value))
+    zoom.value = Math.min(2.0, Math.max(0.005, zoom.value))
 
     timelineOffsetPx.value = mouseX - worldXBefore * zoom.value
     clampOffset(); genTicks(); requestSparksRedraw()
@@ -347,6 +366,8 @@ function onWheel(e: any) {
 }
 
 function onMouseDown(e: any) {
+  timelineContainer.value?.focus()
+
   const pos = e.target.getStage().getPointerPosition()
   if (!pos) return
   lastPointerX = pos.x
@@ -464,6 +485,9 @@ function onMouseUp() {
 }
 
 function onDblClick(e: any) {
+  const btn = e?.evt?.button
+  if (typeof btn === 'number' && btn !== 0) return
+
   const stage = e.target.getStage?.()
   const pos = stage?.getPointerPosition?.()
   if (!pos) return
@@ -491,6 +515,55 @@ function onCropUpdated(payload: { inFrame: number, outFrame: number }) {
   }
 }
 
+/** 우클릭 컨텍스트 메뉴 */
+function onContextMenu(e: any) {
+  e.evt?.preventDefault?.()
+  const stage = e.target.getStage?.()
+  const pos = stage?.getPointerPosition?.()
+  if (!pos) return
+  // 어떤 클립 위인지 hit-test
+  const hit = viewClips.value.find((vc) => {
+    const x = clipX(vc) + timelineOffsetPx.value
+    const y = timelineY + 50 + vc.track * rowH
+    return (pos.x >= x && pos.x <= x + clipW(vc) && pos.y >= y && pos.y <= y + rowH * 0.8)
+  })
+  if (!hit) { ctx.show = false; return }
+  project.setSelectedClip?.(hit.id)
+  ctx.targetClipId = hit.id
+  // Naive UI Dropdown은 viewport 좌표를 기대 -> Konva의 원시 이벤트 clientX/Y 사용
+  ctx.x = e.evt.clientX
+  ctx.y = e.evt.clientY
+  ctx.show = true
+}
+
+function onCtxSelect(key: string) {
+  if (key === 'delete' && ctx.targetClipId) {
+    deleteClipById(ctx.targetClipId)
+  }
+  ctx.show = false
+}
+
+/* ---------- 삭제/Undo ---------- */
+function deleteClipById(id: string) {
+  const removed = project.removeClipWithUndo?.(id)
+  const name = sources.value[removed?.sourceId]?.name || 'clip'
+  // Naive UI Notification + Undo 버튼
+  const n = notification.create({
+    type: 'warning',
+    title: `'${name}' 클립을 삭제했습니다`,
+    content: '복구하시겠습니까?',
+    duration: 3500,
+    keepAliveOnHover: true,
+    action: () =>
+      h(NButton, {
+        text: true,
+        onClick: () => { project.undo?.(); n.destroy(); refreshViewClips(); requestSparksRedraw() }
+      }, { default: () => '복구하기' })
+  })
+  refreshViewClips()
+  requestSparksRedraw()
+}
+
 let lastCursor = ''
 function setCursor(container: HTMLElement, v: string) {
   if (lastCursor !== v) { container.style.cursor = v; lastCursor = v }
@@ -514,9 +587,9 @@ onMounted(async () => {
   contRO = new ResizeObserver(() => measureStageWidth())
   if (timelineContainer.value) contRO.observe(timelineContainer.value)
 
-  window.addEventListener('keydown', (e) => { if (e.altKey) snap.enabled = true })
-  window.addEventListener('keyup', (e) => { if (e.altKey) snap.enabled = false })
+  window.addEventListener('keyup', (e) => { if (snap.enabled) snap.enabled = false })
   window.addEventListener('mouseup', onMouseUp)
+  window.addEventListener('keydown', onKeydown)
 
   refreshViewClips()
   clampOffset()
@@ -537,6 +610,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   try { contRO?.disconnect() } catch { }
   window.removeEventListener('mouseup', onMouseUp)
+  window.removeEventListener('keydown', onKeydown)
 })
 
 watch(clips, refreshViewClips, { deep: true })
@@ -631,6 +705,57 @@ function sparkPointsForClip(clip: any): number[] {
 
 /* ---------- 총 높이 ---------- */
 const totalTimelineHeight = computed(() => project.clips.length * rowHeight + 60)
+
+/* ---------- 키보드 핸들러 ---------- */
+function targetIsEditable(e: KeyboardEvent): boolean {
+  // 우선 이벤트 타겟, 없으면 activeElement 기준
+  const el = (e.target as HTMLElement) || (document.activeElement as HTMLElement) || null
+  if (!el) return false
+
+  // contenteditable
+  if (el.isContentEditable) return true
+  if (el.closest?.('[contenteditable="true"]')) return true
+
+  // 일반 폼 요소
+  const tag = el.tagName?.toLowerCase()
+  if (tag === 'input' || tag === 'textarea' || tag === 'select') return true
+
+  // WAI-ARIA 역할 기반(리치 텍스트/콤보박스 등)
+  const role = el.getAttribute?.('role')
+  if (role === 'textbox' || role === 'combobox') return true
+
+  // naive-ui 입력류 컨테이너 내부 여부 (인풋, 셀렉트, 오토컴플릿 등)
+  if (el.closest?.('.n-input, .n-base-selection, .n-auto-complete, .n-input-wrapper')) return true
+
+  return false
+}
+
+function timelineHasFocus(): boolean {
+  const cont = timelineContainer.value
+  if (!cont) return false
+  const active = (document.activeElement as HTMLElement) || null
+  // 컨테이너 자체가 포커스거나, 그 내부(캔버스 등)에 포커스가 있으면 true
+  return !!active && (active === cont || cont.contains(active))
+}
+
+function onKeydown(e: KeyboardEvent) {
+  if (e.altKey) snap.enabled = true
+
+  // 삭제 계열만 처리
+  if (e.key !== 'Delete' && e.key !== 'Backspace') return
+
+  // 1) 텍스트/폼 편집 중이면 무시
+  if (targetIsEditable(e)) return
+
+  // 2) 타임라인이 포커스일 때만 작동
+  if (!timelineHasFocus()) return
+
+  const id = project.selectedClipId
+  if (!id) return
+
+  e.preventDefault()
+  deleteClipById(id)
+}
 </script>
 
 <style scoped>
@@ -649,6 +774,10 @@ const totalTimelineHeight = computed(() => project.clips.length * rowHeight + 60
   border: 1px solid var(--line-1);
   border-radius: 12px;
   box-shadow: var(--shadow);
+}
+
+.timeline-panel:focus {
+  outline: none;
 }
 
 .timeline-title {

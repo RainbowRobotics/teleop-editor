@@ -207,7 +207,7 @@ let pane = null
 function initPane() {
   if (pane) return
   pane = new Pane({ container: paneContainer.value })
-  const fView = pane.addFolder({ title: 'View', expanded: true })
+  const fView = pane.addFolder({ title: 'View', expanded: false })
   fView.addBinding(enableOrbit, 'value', { label: 'Orbit' })
   fView.addBinding(showCoordinates, 'value', { label: 'Coords' })
   fView.addBinding(gridSize, 'value', { label: 'Grid Size', min: 2, max: 20, step: 1 })

@@ -1,39 +1,44 @@
 <template>
-  <div class="app-shell">
-    <Topbar />
-    <Splitpanes>
-      <!-- Left: Source + Inspector -->
-      <Pane size="25" min-size="20">
-        <Splitpanes horizontal>
-          <Pane size="60">
-            <SourcePanel />
+  <n-config-provider>
+    <n-notification-provider>
+      <div class="app-shell">
+        <Topbar />
+        <Splitpanes>
+          <!-- Left: Source + Inspector -->
+          <Pane size="25" min-size="20">
+            <Splitpanes horizontal>
+              <Pane size="60">
+                <SourcePanel />
+              </Pane>
+              <Pane size="40">
+                <ClipBlendInspector v-if="selectedClip" />
+                <div v-else class="empty-pane">클립을 선택하세요</div>
+              </Pane>
+            </Splitpanes>
           </Pane>
-          <Pane size="40">
-            <ClipBlendInspector v-if="selectedClip" />
-            <div v-else class="empty-pane">클립을 선택하세요</div>
-          </Pane>
-        </Splitpanes>
-      </Pane>
 
-      <!-- Right -->
-      <Pane size="75">
-        <Splitpanes horizontal>
-          <Pane size="70">
-            <RobotView />
-          </Pane>
-          <Pane size="30">
-            <TransportBar />
-            <ClientOnly>
-              <TimelineCanvas />
-            </ClientOnly>
+          <!-- Right -->
+          <Pane size="75">
+            <Splitpanes horizontal>
+              <Pane size="70">
+                <RobotView />
+              </Pane>
+              <Pane size="30">
+                <TransportBar />
+                <ClientOnly>
+                  <TimelineCanvas />
+                </ClientOnly>
+              </Pane>
+            </Splitpanes>
           </Pane>
         </Splitpanes>
-      </Pane>
-    </Splitpanes>
-  </div>
+      </div>
+    </n-notification-provider>
+  </n-config-provider>
 </template>
 
 <script setup>
+import { NConfigProvider, NNotificationProvider } from 'naive-ui'
 import Topbar from '~/components/Topbar.vue'
 import SourcePanel from '@/components/SourcePanel.vue'
 import RobotView from '@/components/RobotView.vue'

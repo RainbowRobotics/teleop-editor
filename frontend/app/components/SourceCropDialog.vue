@@ -70,8 +70,8 @@ const sourceId = defineModel('sourceId', { default: null })
 
 const props = defineProps({
   mode: { type: String, default: 'add' },
-  initialInFrame: { type: Number | null, default: null },
-  initialOutFrame: { type: Number | null, default: null },
+  initialInFrame: { type: Number, default: null },
+  initialOutFrame: { type: Number, default: null },
   confirmLabel: { type: String, default: '' }
 })
 
