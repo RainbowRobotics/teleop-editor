@@ -13,6 +13,7 @@ class TeleopManager:
 
     QUEST_LPF = 0.98
     MASTER_ARM_TORQUE_GAIN = 0.5
+    COLLISION_THRESHOLD = 0.00
 
     # LIMITS
     LINEAR_VECLOITY_LIMIT = 4.0  # m/s
@@ -211,16 +212,18 @@ class TeleopManager:
             # assist torque (copied from your script)
             ma_q_limit_barrier = 0.5
             ma_min_q = np.deg2rad(
-                [-360, -30, 0, -135, -90, 35, -360, -360, 10, -90, -135, -90, 35, -360]
+                [-360, -30, 0, -135, -90, 35, -360, 
+                 -360, 10, -90, -135, -90, 35, -360]
             )
             ma_max_q = np.deg2rad(
-                [360, -10, 90, -60, 90, 80, 360, 360, 30, 0, -60, 90, 80, 360]
+                [360, -10, 90, -60, 90, 80, 360, 
+                 360, 30, 0, -60, 90, 80, 360]
             )
-            ma_torque_limit = np.array([4.0] * 14)
+            ma_torque_limit = np.array([3.5, 3.5, 3.5, 1.5, 1.5, 1.5, 1.5] * 2)
             ma_viscous_gain = np.array([0.02, 0.02, 0.02, 0.02, 0.01, 0.01, 0.002] * 2)
 
             torque = (
-                state.gravity_term
+                state.gravity_term * self.MASTER_ARM_TORQUE_GAIN
                 + ma_q_limit_barrier
                 * (
                     np.maximum(ma_min_q - state.q_joint, 0)
@@ -234,21 +237,21 @@ class TeleopManager:
             if state.button_right.button == 1:
                 mode_r = rby.DynamixelBus.CurrentControlMode
                 self.right_q = state.q_joint[0:7]
-                tgt_torque_r = torque[0:7] * self.MASTER_ARM_TORQUE_GAIN
+                tgt_torque_r = torque[0:7]
                 tgt_pos_r = None
             else:
                 mode_r = rby.DynamixelBus.CurrentBasedPositionControlMode
-                tgt_torque_r = np.array([5] * 7)
+                tgt_torque_r = ma_torque_limit[0:7]
                 tgt_pos_r = self.right_q
 
             if state.button_left.button == 1:
                 mode_l = rby.DynamixelBus.CurrentControlMode
                 self.left_q = state.q_joint[7:14]
-                tgt_torque_l = torque[7:14] * self.MASTER_ARM_TORQUE_GAIN
+                tgt_torque_l = torque[7:14]
                 tgt_pos_l = None
             else:
                 mode_l = rby.DynamixelBus.CurrentBasedPositionControlMode
-                tgt_torque_l = np.array([2] * 7)
+                tgt_torque_l = ma_torque_limit[7:14]
                 tgt_pos_l = self.left_q
 
             # collision check
@@ -261,7 +264,7 @@ class TeleopManager:
                 ROBOT.dyn_model.detect_collisions_or_nearest_links(ROBOT.dyn_state, 1)[
                     0
                 ].distance
-                < 0.02
+                < self.COLLISION_THRESHOLD
             )
 
             # build robot command
