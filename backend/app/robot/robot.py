@@ -131,7 +131,7 @@ class RobotManager:
                             # Use loop period for time axis (seconds)
                             t = Settings.master_arm_loop_period * len(self._rec_samples)
                             q = self.robot_q.copy()
-                            q[0:1] = gripper_q if gripper_q else [0.0, 0.0]
+                            q[0:2] = gripper_q if gripper_q else [0.0, 0.0]
                             self._rec_samples.append([float(t), *map(float, q)])
             except Exception:
                 pass
