@@ -16,8 +16,8 @@
         <!-- Primary Teleop button -->
         <button class="btn" :class="{ info: teleopRunning, disabled: teleopDisabled }" :disabled="teleopDisabled"
           @click="onTeleopClick" :title="teleopTitle">
-          <span v-if="teleopBusy" class="spinner"></span>
           {{ teleopRunning ? 'Stop Teleop' : 'Start Teleop' }}
+          <span v-if="teleopBusy" class="spinner"></span>
         </button>
 
         <!-- Settings toggle -->
@@ -31,19 +31,21 @@
     <div class="row wrap chipbar">
       <div class="chip" :class="robotChipClass" @click="onRobotChipClick" :title="robotTitle">
         <span class="dot"></span>
-        <span v-if="robotBusy" class="spinner small"></span>
         Robot
         <span class="mono">
           {{ robotBusy ? robotPhaseLabel : (robotReady ? 'Ready' : (robotConnected ? 'Connected' : 'Offline')) }}
         </span>
+        <span v-if="robotBusy" class="spinner small"></span>
       </div>
 
       <div class="chip" :class="masterChipClass" @click="onMasterChipClick" :title="masterTitle">
         <span class="dot"></span> Master {{ masterConnected ? 'Connected' : 'Offline' }}
+        <span v-if="masterBusy" class="spinner small"></span>
       </div>
 
       <div class="chip" :class="teleopChipClass" @click="onTeleopClick" :title="teleopTitle">
         <span class="dot"></span> Teleop {{ teleopRunning ? 'Running' : 'Stopped' }}
+        <span v-if="teleopBusy" class="spinner small"></span>
       </div>
 
       <div class="chip" :class="questChipClass" @click="onQuestClick" :title="questBtnText">
@@ -453,14 +455,16 @@ onUnmounted(() => {
   background: #4ea1ff;
 }
 
-/* blue */
 .chip.warn .dot {
   background: #f0c800;
 }
 
-/* yellow */
 .chip.ok .dot {
   background: var(--ok);
+}
+
+.chip.busy .dot {
+  background: #f0c800;
 }
 
 /* green */

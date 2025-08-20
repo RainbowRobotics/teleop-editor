@@ -49,7 +49,8 @@
 
       <div class="actions">
         <button class="ghost" @click="onClose">Cancel</button>
-        <button class="primary" @click="onConfirm">Add as Clip</button>
+        <!-- <button class="primary" @click="onConfirm">Add as Clip</button> -->
+        <button class="primary" @click="onConfirm">{{ confirmText }}</button>
       </div>
     </div>
   </div>
@@ -66,6 +67,13 @@ const project = useProjectStore()
 /* ------------ v-model ------------ */
 const open = defineModel('open', { required: true })
 const sourceId = defineModel('sourceId', { default: null })
+
+const props = defineProps({
+  mode: { type: String, default: 'add' },
+  initialInFrame: { type: Number | null, default: null },
+  initialOutFrame: { type: Number | null, default: null },
+  confirmLabel: { type: String, default: '' }
+})
 
 /* ------------ source refs ------------ */
 const source = computed(() => {
@@ -114,11 +122,34 @@ const pxPerFrame = computed(() => {
 const inFrame = ref(0)
 const outFrame = ref(0) // [in, out)
 
-watch(source, (s) => {
+// watch(source, (s) => {
+//   if (!s) return
+//   inFrame.value = 0
+//   outFrame.value = s.frames.length
+//   scheduleSig()
+// })
+
+function resetSelection() {
+  const s = source.value
   if (!s) return
-  inFrame.value = 0
-  outFrame.value = s.frames.length
+  const total = s.frames.length
+  const i0 = props.initialInFrame ?? 0
+  const i1 = props.initialOutFrame ?? total
+  const safeIn = Math.max(0, Math.min(total - 1, Math.floor(i0)))
+  const safeOut = Math.max(safeIn + 1, Math.min(total, Math.floor(i1)))
+  inFrame.value = safeIn
+  outFrame.value = safeOut
+}
+
+watch([source, () => open.value], ([s, isOpen]) => {
+  if (!s || !isOpen) return
+  resetSelection()
   scheduleSig()
+}, { immediate: true })
+
+const confirmText = computed(() => {
+  if (props.confirmLabel) return props.confirmLabel
+  return props.mode === 'edit' ? 'Update Clip' : 'Add as Clip'
 })
 
 const selLeft = computed(() => inFrame.value * pxPerFrame.value)
@@ -340,7 +371,7 @@ onBeforeUnmount(() => {
 })
 
 /* ------------ confirm ------------ */
-const emit = defineEmits(['close', 'added'])
+const emit = defineEmits(['close', 'added', 'updated'])
 function onClose() {
   open.value = false
   emit('close')
@@ -348,11 +379,25 @@ function onClose() {
 function onConfirm() {
   const s = source.value
   if (!s) return
+  // project.addClipFromSource(s.id, {
+  //   inFrame: inFrame.value,
+  //   outFrame: outFrame.value,
+  //   t0: project.lengthMs,
+  //   name: s.name,
+  // })
+  // emit('added')
+  // onClose()
+  if (props.mode == 'edit') {
+    emit('updated', { inFrame: inFrame.value, outFrame: outFrame.value })
+    onClose()
+    return
+  }
+  // default (add)
   project.addClipFromSource(s.id, {
     inFrame: inFrame.value,
     outFrame: outFrame.value,
     t0: project.lengthMs,
-    name: s.name,
+    name: s.name
   })
   emit('added')
   onClose()

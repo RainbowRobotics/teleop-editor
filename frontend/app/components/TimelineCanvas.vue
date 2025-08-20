@@ -20,8 +20,8 @@
       </div>
     </div>
 
-    <v-stage :config="{ width: Math.max(1, stageWidth), height: totalTimelineHeight }"
-             @wheel="onWheel" @mousedown="onMouseDown" @mousemove="onMouseMove">
+    <v-stage :config="{ width: Math.max(1, stageWidth), height: totalTimelineHeight }" @wheel="onWheel"
+      @mousedown="onMouseDown" @mousemove="onMouseMove" @dblclick="onDblClick" @dbltap="onDblClick">
       <v-layer :key="'base-' + sparksVersion">
         <!-- 배경 -->
         <v-rect :config="{ x: 0, y: 0, width: stageWidth, height: totalTimelineHeight }" />
@@ -111,6 +111,10 @@
       </v-layer>
     </v-stage>
   </div>
+
+  <SourceCropDialog v-model:open="cropOpen" v-model:sourceId="cropSourceId" mode="edit"
+    :initial-in-frame="cropInitialInFrame" :initial-out-frame="cropInitialOutFrame" confirm-label="Update Clip"
+    @updated="onCropUpdated" @close="cropOpen = false" />
 </template>
 
 <script setup lang="ts">
@@ -118,6 +122,7 @@ import { ref, computed, onMounted, onBeforeUnmount, reactive, watch, nextTick } 
 import { useProjectStore, type Source } from '@/stores/project'
 import { storeToRefs } from 'pinia'
 import { MotionClient, throttle } from '@/lib/motionClient'
+import SourceCropDialog from '@/components/SourceCropDialog.vue'
 
 /* ---------- 레이아웃/상수 ---------- */
 const DOF = 24
@@ -197,6 +202,13 @@ let clipDragStartX = 0
 let clipOriginalT0 = 0
 let clipOriginalInFrame = 0
 let clipOriginalOutFrame = 0
+
+/* ---------- crop dialog state ---------- */
+const cropOpen = ref(false)
+const cropSourceId = ref<string | null>(null)
+const cropInitialInFrame = ref<number | null>(null)
+const cropInitialOutFrame = ref<number | null>(null)
+const cropTargetClipId = ref<string | null>(null)
 
 /* ---------- 좌표 변환 ---------- */
 const pxPerMs = computed(() => zoom.value)
@@ -451,6 +463,34 @@ function onMouseUp() {
   }
 }
 
+function onDblClick(e: any) {
+  const stage = e.target.getStage?.()
+  const pos = stage?.getPointerPosition?.()
+  if (!pos) return
+  // hit-test for clip under cursor
+  const hit = viewClips.value.find((vc) => {
+    const x = clipX(vc) + timelineOffsetPx.value
+    const y = timelineY + 50 + vc.track * rowH
+    return (pos.x >= x && pos.x <= x + clipW(vc) && pos.y >= y && pos.y <= y + rowH * 0.8)
+  })
+  if (!hit) return
+  cropSourceId.value = hit.sourceId
+  cropInitialInFrame.value = hit.inFrame
+  cropInitialOutFrame.value = hit.outFrame
+  cropTargetClipId.value = hit.id
+  cropOpen.value = true
+}
+
+function onCropUpdated(payload: { inFrame: number, outFrame: number }) {
+  const id = cropTargetClipId.value
+  if (!id) return
+  const c = clips.value.find(c => c.id === id)
+  if (c) {
+    c.inFrame = payload.inFrame
+    c.outFrame = payload.outFrame
+  }
+}
+
 let lastCursor = ''
 function setCursor(container: HTMLElement, v: string) {
   if (lastCursor !== v) { container.style.cursor = v; lastCursor = v }
@@ -490,8 +530,8 @@ onMounted(async () => {
     motion?.seek(Math.round(t))
   })
 
-  // 백엔드 플레이 상태 폴링 시작 (드리프트 보정에 필요)
-  ;(project as any)._ensurePlayPolling?.()
+    // 백엔드 플레이 상태 폴링 시작 (드리프트 보정에 필요)
+    ; (project as any)._ensurePlayPolling?.()
 })
 
 onBeforeUnmount(() => {
