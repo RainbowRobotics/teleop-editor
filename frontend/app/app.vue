@@ -51,6 +51,7 @@ import 'splitpanes/dist/splitpanes.css'
 
 import { storeToRefs } from 'pinia'
 import { useProjectStore } from '@/stores/project'
+import { setBaseUrl } from '@/lib/apiClient'
 
 // 선택 상태를 읽어서 Inspector 노출 제어
 const project = useProjectStore()
@@ -63,7 +64,8 @@ onMounted(() => {
   const dataURL = window.location.hostname
   const dataPort = 8001
   project.backendUrl = `http://${dataURL}:${dataPort}`;
-  console.log(project.backendUrl)
+
+  setBaseUrl(project.backendUrl)
 })
 
 </script>

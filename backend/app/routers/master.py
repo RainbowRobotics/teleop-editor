@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response, status
 from app.robot.master_arm import MASTER
 
 router = APIRouter(prefix="/master", tags=["master"])
@@ -6,17 +6,17 @@ router = APIRouter(prefix="/master", tags=["master"])
 
 @router.get("/state")
 def state():
-    return MASTER.state()
+    return MASTER.state()  # 200 JSON
 
 
-@router.post("/connect")
+@router.post("/connect", status_code=status.HTTP_204_NO_CONTENT)
 def connect():
     if not MASTER.connect():
-        raise HTTPException(500, "Master connect failed")
-    return MASTER.state()
+        raise HTTPException(status_code=500, detail="Master connect failed")
+    return Response(status_code=204)
 
 
-@router.post("/disconnect")
+@router.post("/disconnect", status_code=status.HTTP_204_NO_CONTENT)
 def disconnect():
     MASTER.disconnect()
-    return MASTER.state()
+    return Response(status_code=204)

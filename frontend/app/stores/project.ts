@@ -1,5 +1,6 @@
 // stores/project.ts
 import { defineStore } from 'pinia'
+import api from '@/lib/apiClient'
 
 export type BlendMode = 'override' | 'crossfade' | 'additive'
 export type BlendCurve = 'linear' | 'smoothstep' | 'easeInOut'
@@ -256,19 +257,14 @@ export const useProjectStore = defineStore('project', {
       this.fromSnapshot(snap)
     },
 
-    // (선택) 백엔드 저장/로드
+    // 백엔드 저장/로드 (apiClient 사용)
     async saveProjectToBackend() {
       if (this.backendUrl == '') return
-
-      await fetch(this.backendUrl + '/api/project', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(this.toSnapshot())
-      })
+      await api.project.save(this.toSnapshot())
     },
 
     async loadProjectFromBackend() {
-      const r = await fetch(this.backendUrl + '/api/project')
-      const p = await r.json() as ProjectSnapshot
+      const p = await api.project.load() as ProjectSnapshot
       this.fromSnapshot(p)
     },
 
@@ -276,42 +272,31 @@ export const useProjectStore = defineStore('project', {
 
     async connectQuest() {
       this.ensureQuestWS();
-
       const [quest_ip, quest_port_str] = this.questAddress.split(':');
       const [local_ip, local_port_str] = this.localAddress.split(':');
 
       try {
-        const r = await fetch(this.backendUrl + '/quest/connect', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            local_ip,
-            quest_ip,
-            ...(local_port_str ? { local_port: Number(local_port_str) } : {}),
-            ...(quest_port_str ? { quest_port: Number(quest_port_str) } : {}),
-          }),
-        });
-        const j = await r.json().catch(() => ({} as any));
-        const ok = r.ok && (j as any).ok !== false;
-        if (!ok) this.questConnected = false;
+        await api.quest.connect({
+         local_ip: local_ip || "",
+          quest_ip: quest_ip || "",
+          ...(local_port_str ? { local_port: Number(local_port_str) } : {}),
+          ...(quest_port_str ? { quest_port: Number(quest_port_str) } : {}),
+        })
+        // 연결 여부는 WS heartbeat로 판단 (기존 로직 유지)
       } catch (e) {
-        console.error(e);
-        this.questConnected = false;
+        console.error(e)
+        this.questConnected = false
       }
     },
 
     async disconnectQuest() {
-      this.stopQuestWS();
-
+      this.stopQuestWS()
       try {
-        const r = await fetch(this.backendUrl + '/quest/disconnect', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-        });
+        await api.quest.disconnect()
       } catch (e) {
-        console.error(e);
+        console.error(e)
       }
-      this.questConnected = false;
+      this.questConnected = false
     },
 
     /* ---------- Quest 연결 상태 관리 ---------- */
@@ -392,10 +377,7 @@ export const useProjectStore = defineStore('project', {
     // Robot
     async refreshRobot() {
       if (this.backendUrl == '') return
-
-      const r = await fetch(`${this.backendUrl}/robot/state`)
-      const s = await r.json()
-      // console.log(s) // TODO DEBUG
+      const s = await api.robot.state() as any
       this.robot.address = s.address ?? this.robot.address
       this.robot.connected = !!s.connected
       this.robot.ready = !!s.ready && !!s.power_all_on
@@ -406,11 +388,7 @@ export const useProjectStore = defineStore('project', {
       this.robot.busy = true
       this.robot.phase = 'connecting'
       try {
-        const body = { address: address ?? this.robot.address ?? '' }
-        const r = await fetch(`${this.backendUrl}/robot/connect`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
-        })
-        if (!r.ok) throw new Error(await r.text())
+        await api.robot.connect(address ?? this.robot.address ?? '')
         await this.refreshRobot()
       } finally {
         this.robot.busy = false
@@ -424,11 +402,7 @@ export const useProjectStore = defineStore('project', {
       this.robot.busy = true
       this.robot.phase = 'enabling'
       try {
-        const r = await fetch(`${this.backendUrl}/robot/enable`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ control_mode: mode })
-        })
-        if (!r.ok) throw new Error(await r.text())
+        await api.robot.enable(mode)
         await this.refreshRobot()
       } finally {
         this.robot.busy = false
@@ -441,7 +415,7 @@ export const useProjectStore = defineStore('project', {
       this.robot.busy = true
       this.robot.phase = 'disconnecting'
       try {
-        await fetch(`${this.backendUrl}/robot/stop`, { method: 'POST' })
+        await api.robot.stop()
         await this.refreshRobot()
       } finally {
         this.robot.busy = false
@@ -452,7 +426,7 @@ export const useProjectStore = defineStore('project', {
       this.robot.busy = true
       this.robot.phase = 'disconnecting'
       try {
-        await fetch(`${this.backendUrl}/robot/disconnect`, { method: 'POST' })
+        await api.robot.disconnect()
         await this.refreshRobot()
       } finally {
         this.robot.busy = false
@@ -479,15 +453,14 @@ export const useProjectStore = defineStore('project', {
     // Master
     async refreshMaster() {
       if (this.backendUrl == '') return
-
-      const r = await fetch(`${this.backendUrl}/master/state`); const s = await r.json()
+      const s = await api.master.state() as any
       this.master.connected = !!s.connected
     },
     async smartMaster() {
       if (this.master.busy) return; this.master.busy = true
       try {
-        if (!this.master.connected) await fetch(`${this.backendUrl}/master/connect`, { method: 'POST' })
-        else await fetch(`${this.backendUrl}/master/disconnect`, { method: 'POST' })
+        if (!this.master.connected) await api.master.connect()
+        else await api.master.disconnect()
         await this.refreshMaster()
       } finally { this.master.busy = false }
     },
@@ -495,48 +468,45 @@ export const useProjectStore = defineStore('project', {
     // Gripper (for manual testing; teleop will run it automatically)
     async refreshGripper() {
       if (this.backendUrl == '') return
-
-      const r = await fetch(`${this.backendUrl}/gripper/state`); const s = await r.json()
-      this.gripper.connected = !!s.connected; this.gripper.homed = !!s.homed; this.gripper.running = !!s.running
+      const s = await api.gripper.state() as any
+      this.gripper.connected = !!s.connected
+      this.gripper.homed = !!s.homed
+      this.gripper.running = !!s.running
       this.gripper.target_n = Array.isArray(s.target_n) ? (s.target_n as [number, number]) : null
     },
     async smartGripper() {
       if (this.gripper.busy) return; this.gripper.busy = true
       try {
         if (!this.gripper.connected) {
-          await fetch(`${this.backendUrl}/gripper/connect`, { method: 'POST' })
-          await fetch(`${this.backendUrl}/gripper/homing`, { method: 'POST' })
-          await fetch(`${this.backendUrl}/gripper/start`, { method: 'POST' })
+          await api.gripper.connect()
+          await api.gripper.homing()
+          await api.gripper.start()
         } else {
-          await fetch(`${this.backendUrl}/gripper/stop`, { method: 'POST' })
-          await fetch(`${this.backendUrl}/gripper/disconnect`, { method: 'POST' })
+          await api.gripper.stop()
+          await api.gripper.disconnect()
         }
         await this.refreshGripper()
       } finally { this.gripper.busy = false }
     },
     async setGripperNormalized(n: [number, number]) {
-      await fetch(`${this.backendUrl}/gripper/target/n`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ n }),
-      })
+      await api.gripper.setTargetN(n)
       this.gripper.target_n = n
     },
 
     // Teleop
     async refreshTeleop() {
       if (this.backendUrl == '') return
-
-      const r = await fetch(`${this.backendUrl}/teleop/state`); const s = await r.json()
-      this.teleop.running = !!s.running; this.teleop.mode = s.mode ?? this.teleop.mode
+      const s = await api.teleop.state() as any
+      this.teleop.running = !!s.running
+      this.teleop.mode = s.mode ?? this.teleop.mode
     },
     async toggleTeleop() {
       if (this.teleop.busy) return; this.teleop.busy = true
       try {
         if (!this.teleop.running) {
-          await fetch(`${this.backendUrl}/teleop/start`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: this.teleop.mode }) })
+          await api.teleop.start(this.teleop.mode)
         } else {
-          await fetch(`${this.backendUrl}/teleop/stop`, { method: 'POST' })
+          await api.teleop.stop()
         }
         await this.refreshTeleop()
       } finally { this.teleop.busy = false }
@@ -617,15 +587,13 @@ export const useProjectStore = defineStore('project', {
       if (this._playPollTimer) return
       const tick = async () => {
         try {
-          const r = await fetch(`${this.backendUrl}/play/state`, { cache: 'no-store' })
-          if (!r.ok) return
-          const s = await r.json()
-          this.player.playing = !!s.playing
-          this._srv_marker_ms = Number(s.marker_ms || 0)
+          const s = await api.play.state()
+          this.player.playing = !!(s as any).playing
+          this._srv_marker_ms = Number((s as any).marker_ms || 0)
           this._srv_poll_at_ms = (typeof performance !== 'undefined') ? performance.now() : Date.now()
           // 일시정지/정지 상태에서는 백엔드 위치를 로컬로 채택
           if (!this.player.playing) this.player.t_ms = this._srv_marker_ms
-        } catch { }
+        } catch { /* 알림은 apiClient가 처리 */ }
       }
       this._playPollTimer = window.setInterval(tick, intervalMs)
       tick()
@@ -640,11 +608,7 @@ export const useProjectStore = defineStore('project', {
 
     async seek(ms: number) {
       const marker_ms = Math.max(0, Math.round(ms))
-      await fetch(`${this.backendUrl}/play/seek`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ marker_ms })
-      }).catch(() => {/* ignore network hiccup */ })
+      try { await api.play.seek(marker_ms) } catch { /* notification already shown */ }
       // mirror locally
       this.player.t_ms = marker_ms
       this.player.playing = false
@@ -653,15 +617,7 @@ export const useProjectStore = defineStore('project', {
     async play(t0_ms?: number) {
       const nowMarker = this.uiMarkerMs // getter 사용: 재생 중엔 서버 기준
       const t = typeof t0_ms === 'number' ? t0_ms : nowMarker || 0
-      const res = await fetch(`${this.backendUrl}/play/start`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ t0_ms: t })
-      })
-      if (!res.ok) {
-        const msg = await res.json().catch(() => ({} as any))
-        throw new Error(msg?.detail || `Play start failed (${res.status})`)
-      }
+      await api.play.start(t)
       // 재생 시작: 서버 권위로 스냅
       this.player.playing = true
       this._srv_marker_ms = t
@@ -670,27 +626,21 @@ export const useProjectStore = defineStore('project', {
     },
 
     async pause() {
-      await fetch(`${this.backendUrl}/play/stop`, { method: 'POST' })
+      await api.play.stop()
       // 서버의 마지막 마커를 취해 로컬로 정착
       try {
-        const r = await fetch(`${this.backendUrl}/play/state`, { cache: 'no-store' })
-        if (r.ok) {
-          const s = await r.json()
-          this.player.playing = false
-          this.player.t_ms = Number(s.marker_ms || 0)
-        } else {
-          this.player.playing = false
-        }
+        const s = await api.play.state()
+        this.player.playing = false
+        this.player.t_ms = Number((s as any).marker_ms || 0)
       } catch {
         this.player.playing = false
       }
     },
 
     async stop() {
-      await fetch(`${this.backendUrl}/play/stop`, { method: 'POST' })
+      await api.play.stop()
       this.player.playing = false
       this.player.t_ms = 0
-
       await this.seek(0)
     },
   }

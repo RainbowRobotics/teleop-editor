@@ -1,20 +1,16 @@
-# backend/app/routers/record.py
 from fastapi import APIRouter, Response, HTTPException, status
 from app.robot.robot import ROBOT
-
 
 router = APIRouter(prefix="/record", tags=["record"])
 
 
-@router.post("/start")
+@router.post("/start", status_code=status.HTTP_204_NO_CONTENT)
 def record_start():
-    # Fail if robot not connected
     if not ROBOT.connected:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Robot not connected",
         )
-    # Fail if already active
     st = ROBOT.recording_state()
     if st.get("active"):
         raise HTTPException(
@@ -26,23 +22,19 @@ def record_start():
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to start recording",
         )
-    return {"ok": True}
+    return Response(status_code=204)
 
 
-@router.post("/stop")
+@router.post("/stop", status_code=status.HTTP_204_NO_CONTENT)
 def record_stop():
-    st = ROBOT.recording_state()
-    if not st.get("active"):
-        # Idempotent stop: still OK, return current counters
-        info = ROBOT.stop_recording()
-        return {"ok": True, **info}
-    info = ROBOT.stop_recording()
-    return {"ok": True, **info}
+    # stop은 idempotent하게 동작하되, 본문은 비우고 204
+    ROBOT.stop_recording()
+    return Response(status_code=204)
 
 
 @router.get("/state")
 def record_state():
-    return ROBOT.recording_state()
+    return ROBOT.recording_state()  # 200 JSON
 
 
 @router.get("/download")
@@ -57,4 +49,4 @@ def record_download():
 
 @router.get("/summary")
 def record_summary():
-    return ROBOT.build_recording_summary()
+    return ROBOT.build_recording_summary()  # 200 JSON

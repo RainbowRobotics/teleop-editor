@@ -1,6 +1,8 @@
 import logging
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+import traceback
 
 from app.routers import (
     quest,
@@ -35,6 +37,25 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.exception_handler(Exception)
+    async def global_exception_handler(request: Request, exc: Exception):
+        # 로그 남기기
+        logging.error(f"Unhandled exception: {exc}")
+        traceback.print_exc()
+
+        # HTTPException은 그대로 전달
+        if isinstance(exc, HTTPException):
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"detail": exc.detail},
+            )
+
+        # 나머지 일반 Exception → 500 JSON 반환
+        return JSONResponse(
+            status_code=500,
+            content={"detail": str(exc) or "Internal Server Error"},
+        )
 
     # Include routers
     app.include_router(ws.router)

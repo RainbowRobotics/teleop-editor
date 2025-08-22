@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response, status
 from pydantic import BaseModel
 from app.teleop.teleop import TELEOP
 from app.robot.robot import ROBOT
@@ -13,20 +13,20 @@ class StartReq(BaseModel):
 
 @router.get("/state")
 def state():
-    return TELEOP.state()
+    return TELEOP.state()  # 200 JSON
 
 
-@router.post("/start")
+@router.post("/start", status_code=status.HTTP_204_NO_CONTENT)
 def start(req: StartReq):
     if not (ROBOT.connected and ROBOT.ready):
-        raise HTTPException(400, "Robot not ready")
+        raise HTTPException(status_code=400, detail="Robot not ready")
     if not MASTER.connected:
-        raise HTTPException(400, "Master not connected")
+        raise HTTPException(status_code=400, detail="Master not connected")
     TELEOP.start(control_mode=req.mode)
-    return TELEOP.state()
+    return Response(status_code=204)
 
 
-@router.post("/stop")
+@router.post("/stop", status_code=status.HTTP_204_NO_CONTENT)
 def stop():
     TELEOP.stop()
-    return TELEOP.state()
+    return Response(status_code=204)

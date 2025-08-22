@@ -31,31 +31,37 @@ class Gripper:
         with self._lock:
             if self.connected:
                 return True
-            self.bus = rby.DynamixelBus(rby.upc.GripperDeviceName)
-            self.bus.open_port()
-            self.bus.set_baud_rate(2_000_000)
-            self.bus.set_torque_constant([1, 1])
+            
+            try:
+                self.bus = rby.DynamixelBus(rby.upc.GripperDeviceName)
+                if not self.bus.open_port():
+                    return False
+                if not self.bus.set_baud_rate(2_000_000):
+                    return False
+                self.bus.set_torque_constant([1, 1])
 
-            ids = [0, 1]
-            ok = True
-            for i in ids:
-                if not self.bus.ping(i):
-                    if verbose:
-                        print(f"[Gripper] Dynamixel ID {i} is not active")
-                    ok = False
-                elif verbose:
-                    print(f"[Gripper] Dynamixel ID {i} is active")
-            if not ok:
-                try:
-                    self.bus.close_port()
-                except Exception:
-                    pass
-                self.bus = None
+                ids = [0, 1]
+                ok = True
+                for i in ids:
+                    if not self.bus.ping(i):
+                        if verbose:
+                            print(f"[Gripper] Dynamixel ID {i} is not active")
+                        ok = False
+                    elif verbose:
+                        print(f"[Gripper] Dynamixel ID {i} is active")
+                if not ok:
+                    try:
+                        self.bus.close_port()
+                    except Exception:
+                        pass
+                    self.bus = None
+                    return False
+
+                self.bus.group_sync_write_torque_enable([(i, 1) for i in ids])
+                self.connected = True
+                return True
+            except Exception:
                 return False
-
-            self.bus.group_sync_write_torque_enable([(i, 1) for i in ids])
-            self.connected = True
-            return True
 
     def disconnect(self):
         with self._lock:
