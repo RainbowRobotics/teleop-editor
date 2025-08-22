@@ -39,6 +39,7 @@ class RobotManager:
         self.robot_max_q = None
         self.robot_max_qdot = None
         self.robot_max_qddot = None
+        self._initialized = False
 
         # Cached kinematics bits
         self._lock = threading.Lock()
@@ -104,9 +105,15 @@ class RobotManager:
         self.tool_flange_12v = {"right": False, "left": False}
 
         PowerOn = rby.PowerState.State.PowerOn
+        self._initialized = False
 
-        def state_cb(state: rby.RobotState_A):
-            self.robot_q = state.target_position
+        def state_cb(state: rby.RobotState_A, cm_state: rby.ControlManagerState):
+            self._initialized = True
+        
+            if cm_state.state == rby.ControlManagerState.State.Enabled:
+                self.robot_q = np.where(state.is_ready, state.target_position, state.position).copy()
+            else:
+                self.robot_q = state.position.copy()
 
             # kinematics cache
             self.dyn_state.set_q(self.robot_q)
@@ -154,7 +161,16 @@ class RobotManager:
                     self.power_all_on = False
 
         self.robot.start_state_update(state_cb, 1 / Settings.master_arm_loop_period)
-        return True
+        
+        CONNECTION_CHECK_ITERATION = 10
+        for _ in range(CONNECTION_CHECK_ITERATION):
+            if self._initialized:
+                return True
+            time.sleep(0.1)
+        
+        self.robot.stop_state_update()
+        
+        return False
 
     def ensure_power_and_tools(self, timeout_s: float = 5.0) -> bool:
         if not self.connected:
@@ -338,7 +354,7 @@ class RobotManager:
         )
 
     def get_current_pose(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        if not self.connected:
+        if (not self.connected) or (not self._initialized):
             raise RuntimeError("아직 로봇 연결이 안되어있습니다.")
 
         current_time = time.time()
@@ -417,7 +433,6 @@ class RobotManager:
                 ),
                 "left_arm_q": left_arm_q.tolist() if left_arm_q is not None else None,
             },
-            # NOTE: as requested, not including 'q' or 'joint_names' here
         }
 
     # -------------------------
